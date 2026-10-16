@@ -92,11 +92,12 @@ import androidx.compose.ui.unit.dp
 @Composable fun AuthPanel(title: String, subtitle: String, error: String = "", enabled: Boolean = true,
     identity: Any? = title, preferPin: Boolean = false, autoPinLength: Int = 0,
     onPin: (CharArray, () -> Unit) -> Unit, onBiometric: (() -> Unit)? = null,
-    onHome: (() -> Unit)? = null, exitLabel: String = "Return home") {
+    onHome: (() -> Unit)? = null, exitLabel: String = "Return home", onPinVisibility: (Boolean) -> Unit = {}) {
     var pin by remember(identity) { mutableStateOf("") }
     var busy by remember(identity) { mutableStateOf(false) }
     var pinVisible by remember(identity) { mutableStateOf(onBiometric == null || preferPin) }
     LaunchedEffect(preferPin, onBiometric == null) { if (preferPin || onBiometric == null) pinVisible = true }
+    LaunchedEffect(pinVisible) { onPinVisibility(pinVisible) }
     fun submit() {
         if (!enabled || busy || pin.length !in 6..12) return
         busy = true

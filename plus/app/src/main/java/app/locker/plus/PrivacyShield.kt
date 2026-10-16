@@ -26,6 +26,7 @@ class PrivacyShield(private val service: LockerService) : LifecycleOwner, ViewMo
     val pinFallback = mutableStateOf(false)
     private var attached = false
     val isAttached get() = attached
+    var awaitingFirstFrame = false; private set
     private val appLabel = mutableStateOf("")
     private var presentedPackage: String? = null
     private var receipt = 0L
@@ -65,7 +66,7 @@ class PrivacyShield(private val service: LockerService) : LifecycleOwner, ViewMo
                     onPin = { pin, done -> current?.let { service.verifyPin(it, pin) { message.value = it; done() } } ?: done() },
                     preferPin = pinFallback.value,
                     autoPinLength = if (service.app.config.state.value.autoPin) service.app.vault.pinLength() else 0,
-                    onBiometric = if (service.biometricAvailable) ({ current?.let(service::biometric) }) else null, onHome = service::home)
+                    onBiometric = if (service.biometricAvailable) ({ current?.let(service::biometric) }) else null, onHome = service::home, onPinVisibility = ::setPinFocus)
             } }
         }
     }
@@ -86,16 +87,35 @@ class PrivacyShield(private val service: LockerService) : LifecycleOwner, ViewMo
         }
         receipt = received; measured = false; attachment++
         val params = WindowManager.LayoutParams(-1, -1, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_SECURE or WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED, PixelFormat.OPAQUE)
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_SECURE or WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED, PixelFormat.OPAQUE)
         params.setTitle("Sam App Locker privacy shield")
-        wm.addView(frame, params); attached = true
+        params.windowAnimations = 0
+        awaitingFirstFrame = android.os.Build.VERSION.SDK_INT >= 29
+        try { wm.addView(frame, params); attached = true }
+        catch (error: Exception) { awaitingFirstFrame = false; throw error }
         if (android.os.Build.VERSION.SDK_INT >= 29) {
+            val currentAttachment = attachment
             frame.viewTreeObserver.registerFrameCommitCallback {
-                Diagnostics.record(if (eventOrigin) "shield_event_frame_committed" else "shield_scan_frame_committed", SystemClock.elapsedRealtime() - received)
-                frame.post { if (attached && challenge != null && token.value == challenge && !uncertain.value) service.shieldReady(challenge) }
+                val duration = SystemClock.elapsedRealtime() - received
+                frame.post {
+                    if (attached && attachment == currentAttachment) {
+                        awaitingFirstFrame = false
+                        Diagnostics.record(if (eventOrigin) "shield_event_frame_committed" else "shield_scan_frame_committed", duration)
+                        service.onShieldFrameCommitted()
+                        // Reconcile queued window evidence before requesting authentication.
+                        frame.post { if (attached && challenge != null && token.value == challenge && !uncertain.value) service.shieldReady(challenge) }
+                    }
+                }
             }
         }
         registry.handleLifecycleEvent(Lifecycle.Event.ON_START); registry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+    }
+    private fun setPinFocus(visible: Boolean) {
+        if (!attached) return
+        val params = frame.layoutParams as? WindowManager.LayoutParams ?: return
+        val flags = if (visible) params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
+            else params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        if (flags != params.flags) { params.flags = flags; wm.updateViewLayout(frame, params) }
     }
     fun clearSessionUi() { presentedPackage = null; pinFallback.value = false; message.value = "" }
     /** Never finish an opaque auth host until its replacement frame is submitted. */
@@ -115,7 +135,7 @@ class PrivacyShield(private val service: LockerService) : LifecycleOwner, ViewMo
         if (!attached) return
         val start = SystemClock.elapsedRealtime()
         registry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE); registry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
-        wm.removeViewImmediate(frame); attached = false
+        wm.removeViewImmediate(frame); attached = false; awaitingFirstFrame = false
         // Next attachment must submit the native opaque backing before rebuilding UI.
         frame.removeView(compose)
         compose.disposeComposition()

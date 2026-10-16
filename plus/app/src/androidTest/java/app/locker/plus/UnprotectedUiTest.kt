@@ -23,8 +23,8 @@ class UnprotectedUiTest {
         require(locker in setOf("app.sam.locker.debug", "app.sam.locker"))
         repeat(100) { cycle ->
             device.pressHome()
-            instrumentation.targetContext.startActivity(Intent(Intent.ACTION_MAIN)
-                .setClassName("app.locker.fixture.public", "app.locker.fixture.FixtureActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            val launch = device.executeShellCommand("am start --user 0 -W -a android.intent.action.MAIN -n app.locker.fixture.public/app.locker.fixture.FixtureActivity")
+            assertTrue("Public launch failed: $launch", launch.contains("Status: ok"))
             assertTrue(device.wait(Until.hasObject(By.pkg("app.locker.fixture.public")), 5_000))
             if (cycle % 10 == 0) {
                 device.findObject(By.pkg("app.locker.fixture.public").clazz("android.widget.EditText")).click()

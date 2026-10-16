@@ -1,4 +1,13 @@
-# Sam App Locker 1.1.0-rc1
+# Sam App Locker 1.1.0-rc2
+
+This is an in-place update from rc1: `app.sam.locker`, versionCode 4, same dedicated signing identity. Existing PIN and selections are retained. Debug remains `app.sam.locker.debug`.
+
+The update moves expensive window inspection behind the first opaque frame, validates a protected window before automatically starting fingerprint authentication, refreshes the separate authentication task, and reconciles missing/replaced window events conservatively. It targets late fingerprint windows, stuck covers and transition flashes. It does not guarantee zero initial app frames. See [RC2 verification](RC2-VERIFICATION.md) for measured results.
+
+The interface, fingerprint-first flow, automatic PIN option and uninstall limitations below are retained from rc1. The old 1.0 package still requires fresh setup when moving to this application ID.
+
+## Original rc1 changes
+
 
 This is a test update addressing the owner's feedback about the basic interface, PIN-first flow and unrelated-app flashes. It is not a new claim of native ColorOS enforcement. At the owner’s request, release now uses `app.sam.locker` and debug uses `app.sam.locker.debug`. This is a separate Android installation from 1.0.0 and earlier candidate builds: configure a new private PIN, accessibility grant and app selections. The legitimate release signing certificate is retained.
 

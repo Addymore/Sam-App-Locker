@@ -36,12 +36,16 @@ class BiometricUiProbeTest {
         device.pressHome()
         assertTrue("Previous shield did not leave Home", device.wait(Until.gone(By.pkg(lockerPackage).text("App is locked")), 10_000))
         val target = if (cycle % 2 == 0) "app.locker.fixture.blue" else "app.locker.fixture.red"
-        val entry = when (if (mixedEntries) cycle % 3 else 0) {
-            0 -> Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-            1 -> Intent(Intent.ACTION_VIEW, android.net.Uri.parse("lockerfixture://release-test/$cycle"))
-            else -> Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, "Synthetic release test")
+        if (cycle % 10 == 0 && InstrumentationRegistry.getArguments().getString("coldEntries", "false") == "true") {
+            device.executeShellCommand("am force-stop --user 0 $target")
         }
-        instrumentation.targetContext.startActivity(entry.setClassName(target, "app.locker.fixture.FixtureActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        val entryArgs = when (if (mixedEntries) cycle % 3 else 0) {
+            0 -> "-a android.intent.action.MAIN -c android.intent.category.LAUNCHER"
+            1 -> "-a android.intent.action.VIEW -d lockerfixture://release-test/$cycle"
+            else -> "-a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT synthetic"
+        }
+        val launch = device.executeShellCommand("am start --user 0 -W -n $target/app.locker.fixture.FixtureActivity $entryArgs")
+        assertTrue("Fixture launch failed at $cycle: $launch", launch.contains("Status: ok"))
         // Fingerprint must appear without a tap in 1.1. The opaque shield is
         // committed before the service starts the biometric host.
         val promptDeadline = android.os.SystemClock.elapsedRealtime() + 15_000
@@ -73,8 +77,8 @@ class BiometricUiProbeTest {
         }
         assertFalse("Biometric Activity did not finish behind restored shield", hostPresent)
         if (InstrumentationRegistry.getArguments().getString("publicExit", "false") == "true") {
-            instrumentation.targetContext.startActivity(Intent(Intent.ACTION_MAIN)
-                .setClassName("app.locker.fixture.public", "app.locker.fixture.FixtureActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            val exit = device.executeShellCommand("am start --user 0 -W -a android.intent.action.MAIN -n app.locker.fixture.public/app.locker.fixture.FixtureActivity")
+            assertTrue("Public fixture launch failed: $exit", exit.contains("Status: ok"))
             assertTrue("Protected-to-public exit left a locker window", device.wait(Until.gone(By.pkg(lockerPackage)), 5_000))
             assertTrue(device.hasObject(By.pkg("app.locker.fixture.public")))
         }

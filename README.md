@@ -1,6 +1,6 @@
 # Sam App Locker
 
-**1.1.0-rc1 test update:** automatic fingerprint-first entry, automatic PIN confirmation with an optional Continue button, softer Samsung-inspired cards, separate Locked/Unlocked tabs, system/downloaded filters and a fix for unrelated-window shielding. [Candidate APKs](https://github.com/Addymore/Sam-App-Locker/releases/tag/v1.1.0-rc1) · [Changes and uninstall limitations](plus/UPDATE-1.1.md) · [Candidate verification](plus/RC1-VERIFICATION.md). Version 1.0.0 remains the previous stable release.
+**1.1.0-rc2 test update:** automatic fingerprint-first entry, automatic PIN confirmation with an optional Continue button, softer Samsung-inspired cards, separate Locked/Unlocked tabs, system/downloaded filters and updated shield timing and foreground-transition recovery. [Candidate APKs](https://github.com/Addymore/Sam-App-Locker/releases/tag/v1.1.0-rc2) · [Changes and uninstall limitations](plus/UPDATE-1.1.md) · [Candidate verification](plus/RC2-VERIFICATION.md). Version 1.0.0 remains the previous stable release.
 
 An offline Kotlin/Jetpack Compose app locker for ordinary Samsung Galaxy phones. Material 3 cards, searchable app selection, strong fingerprint authentication and an app-specific PIN. Developed and tested on a Galaxy A57 running Android 17 / One UI 9.
 
