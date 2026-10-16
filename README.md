@@ -16,7 +16,7 @@ This is a development build pending the verification matrix described below. It 
 
 ## Build and review
 
-See [setup and build instructions](plus/SETUP.md), [architecture and upstream audit](plus/ARCHITECTURE.md), and [test protocol](plus/TESTING.md). The delivered verification report records actual results and limitations.
+See [setup and build instructions](plus/SETUP.md), [architecture and upstream audit](plus/ARCHITECTURE.md), [test protocol](plus/TESTING.md), and [actual verification results and limitations](plus/VERIFICATION.md).
 
 ```text
 cd plus
