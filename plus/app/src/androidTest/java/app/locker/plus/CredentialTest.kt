@@ -34,6 +34,22 @@ class CredentialTest {
         check(context.getSharedPreferences("credential", 0).edit()
             .putString("sealed", Base64.encodeToString(sealed, Base64.NO_WRAP)).putInt("failures", 0).commit())
     }
+    @Test fun savedLengthAndAuthenticatedMetadataMigration() {
+        val context = context()
+        val vault = context.app.vault
+        val prefs = context.getSharedPreferences("credential", 0)
+        for (pin in listOf("246813", "24681357", "246813579024")) {
+            vault.enroll(pin.toCharArray())
+            assertEquals(pin.length, vault.pinLength())
+            prefs.edit().remove("pin_length").commit()
+            assertEquals(0, vault.pinLength())
+            assertFalse(vault.verify("000000".toCharArray()).success)
+            assertEquals(0, vault.pinLength())
+            assertTrue(vault.verify(pin.toCharArray()).success)
+            assertEquals(pin.length, PinVault(context).pinLength())
+        }
+        vault.enroll("246813".toCharArray())
+    }
     @Test fun legacyMigrationAnd100RecreatedVaultChecks() {
         val context = context()
         val prefs = context.getSharedPreferences("credential", 0)

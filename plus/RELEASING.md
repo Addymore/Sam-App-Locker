@@ -1,5 +1,7 @@
 # Build and sign a release
 
+The current candidate is 1.1.0-rc1 / versionCode 3. Use candidate filenames when signing this source. The package IDs and release certificate are unchanged. Do not replace a public APK under an existing tag; publish the candidate under its own tag and mark it as a prerelease. The 1.0 examples below describe the preceding release.
+
 Version 1.0.0 uses versionCode 2, following preview versionCode 1. Release application ID: `app.locker.plus.release`. Debug application ID: `app.locker.plus`, retained for in-place preview upgrades. Their authentication task affinities follow the application ID. Android does not transfer the Keystore-protected PIN between installations; configure the release separately and disable the previous protection service when switching.
 
 The published release is signed with a dedicated RSA-3072 key, not the Android debug key. It is not debuggable. The owner-generated key is kept outside the checkout and public archives, with a Windows-DPAPI-protected password and restricted filesystem access. Back up that identity securely before moving/reinstalling the build machine. DPAPI recovery requires the original Windows profile; make a separate encrypted owner-controlled backup for disaster recovery. Never upload private keys, passwords or credential preferences to GitHub.
@@ -23,3 +25,7 @@ Verify the certificate fingerprint against the preceding release before every up
 Before publishing, run the checks in TESTING.md, review the honest device limitations in VERIFICATION.md, inspect the source archive for secrets, compute SHA-256 hashes and attach the signed release, debug APK, source archive and verification evidence to a versioned GitHub release.
 
 References: [Android app signing](https://developer.android.com/studio/publish/app-signing), [apksigner](https://developer.android.com/tools/apksigner), [16 KB alignment](https://developer.android.com/guide/practices/page-sizes).
+
+## New package identity in 1.1
+
+Owner-requested release ID: `app.sam.locker`; debug ID: `app.sam.locker.debug`; isolated runner: `app.sam.locker.testbed`. Kotlin namespace remains `app.locker.plus` to preserve source imports. This is a new installation, not an in-place data migration from the historical 1.0 identities above. Never copy private PIN data or accessibility grants between packages.

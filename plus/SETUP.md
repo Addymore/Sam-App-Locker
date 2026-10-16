@@ -1,6 +1,6 @@
 # Sam App Locker — Samsung setup
 
-1. For a new installation, install the signed release APK (`app.locker.plus.release`). The debug APK (`app.locker.plus`) updates the earlier test installation while preserving its PIN and selections. Both coexist with upstream AppLock. When switching from debug to release, configure the release afresh and disable the debug service; do not run both protection services together.
+1. Install the release APK (`app.sam.locker`). Debug uses `app.sam.locker.debug`. These new package IDs do not inherit the PIN, selected apps or accessibility grant from v1.0/older candidates. Configure the new installation, then disable the old locker service. Both coexist with upstream AppLock; run only one protection service.
 2. Open Sam App Locker and create/confirm a 6–12 digit app PIN. Choose a PIN you can remember; it is independent of your device unlock PIN.
 3. Open the Settings tab, then the Accessibility Settings button. Under Installed apps/services, select Sam App Locker, review its disclosed window-access capability, then enable it yourself.
 4. If Samsung blocks this because the APK was sideloaded, open Settings → Apps → Sam App Locker → More options → Allow restricted settings, if that option is offered. Return to Accessibility. Do not disable Play Protect. If installation is blocked, retain that protection and investigate the warning.

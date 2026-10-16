@@ -29,6 +29,7 @@ class PinVault(context: Context) {
     private val argon by lazy {
         try { Argon2Kt() } catch (e: LinkageError) { throw IllegalStateException("PIN library unavailable", e) }
     }
+    fun pinLength() = prefs.getInt("pin_length", 0).takeIf { it in 6..12 } ?: 0
     fun exists() = prefs.contains("sealed")
     private fun key(): SecretKey {
         val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
@@ -77,7 +78,7 @@ class PinVault(context: Context) {
         try {
             require(pin.size in 6..12 && pin.all { it in '0'..'9' })
             val sealed = seal(newRecord(pin))
-            check(prefs.edit().putString("sealed", sealed).putInt("failures", 0).commit())
+            check(prefs.edit().putString("sealed", sealed).putInt("pin_length", pin.size).putInt("failures", 0).commit())
             blockedUntil = 0
             initialized = true
         } finally { pin.fill('\u0000') }
@@ -111,7 +112,7 @@ class PinVault(context: Context) {
                 finally { actual.fill(0); expected.fill(0) }
             } finally { plain.fill(0) }
             if (success) {
-                val editor = prefs.edit().putInt("failures", 0)
+                val editor = prefs.edit().putInt("failures", 0).putInt("pin_length", pin.size)
                 // Authenticate the old record first, then atomically replace it. Failed attempts never migrate.
                 if (legacy) editor.putString("sealed", seal(newRecord(pin)))
                 check(editor.commit()); blockedUntil = 0

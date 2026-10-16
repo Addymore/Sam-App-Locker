@@ -19,8 +19,8 @@ class Config(context: Context) {
     val prefs = context.getSharedPreferences("plus-settings", Context.MODE_PRIVATE)
     private val locked = dev.pranav.applock.data.repository.LockedAppsRepository(context)
     private val appPrefs = context.getSharedPreferences("app_lock_prefs", Context.MODE_PRIVATE)
-    data class UiState(val apps: Set<String>, val rule: LockEngine.Rule, val seconds: Int, val shared: Boolean, val dynamic: Boolean)
-    private fun snapshot() = UiState(apps(), rule(), seconds(), shared(), dynamic())
+    data class UiState(val apps: Set<String>, val rule: LockEngine.Rule, val seconds: Int, val shared: Boolean, val dynamic: Boolean, val autoPin: Boolean)
+    private fun snapshot() = UiState(apps(), rule(), seconds(), shared(), dynamic(), autoPin())
     val state = mutableStateOf(snapshot())
     private val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ -> state.value = snapshot() }
     init { prefs.registerOnSharedPreferenceChangeListener(listener); appPrefs.registerOnSharedPreferenceChangeListener(listener) }
@@ -32,6 +32,7 @@ class Config(context: Context) {
     fun rule() = runCatching { LockEngine.Rule.valueOf(prefs.getString("rule", "ON_EXIT")!!) }.getOrDefault(LockEngine.Rule.ON_EXIT)
     fun seconds() = prefs.getInt("seconds", 60)
     fun shared() = prefs.getBoolean("shared", false)
+    fun autoPin() = prefs.getBoolean("auto_pin", true)
     fun dynamic() = prefs.getBoolean("dynamic", true)
 }
 

@@ -30,7 +30,12 @@ class LockEngine(private val now: () -> Long) {
             sessions.keys.removeAll { it != "*" && it !in packages }
             if (visible != packages) sessions.remove("*")
         }
-        visible = packages.toSet(); uncertain = incomplete && protectedApps.isNotEmpty()
+        // An unreadable keyboard/transition on an unrelated app is not evidence
+        // that a protected app is visible. Preserve fail-closed behavior only
+        // when the current or unresolved preceding window involved protection.
+        val protectedRisk = packages.any { it in protectedApps } ||
+            (packages.isEmpty() && (visible.any { it in protectedApps } || uncertain))
+        visible = packages.toSet(); uncertain = incomplete && protectedRisk
         reconcile()
     }
     fun tick() = reconcile()

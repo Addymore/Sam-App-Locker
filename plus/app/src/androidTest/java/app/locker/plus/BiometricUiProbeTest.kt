@@ -20,8 +20,8 @@ class BiometricUiProbeTest {
     @Test fun fingerprintButtonAndCancellation() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         check(instrumentation.targetContext.packageName.endsWith(".testbed"))
-        val lockerPackage = InstrumentationRegistry.getArguments().getString("lockerPackage", "app.locker.plus")
-        require(lockerPackage in setOf("app.locker.plus", "app.locker.plus.release"))
+        val lockerPackage = InstrumentationRegistry.getArguments().getString("lockerPackage", "app.sam.locker.debug")
+        require(lockerPackage in setOf("app.sam.locker.debug", "app.sam.locker"))
         Configurator.getInstance().uiAutomationFlags = UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES
         Configurator.getInstance().waitForIdleTimeout = 100
         val device = UiDevice.getInstance(instrumentation)
@@ -42,11 +42,8 @@ class BiometricUiProbeTest {
             else -> Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, "Synthetic release test")
         }
         instrumentation.targetContext.startActivity(entry.setClassName(target, "app.locker.fixture.FixtureActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        val button = device.wait(Until.findObject(By.pkg(lockerPackage).text("Use fingerprint / strong biometric")), 15_000)
-        assertNotNull("Biometric button missing on protected fixture", button)
-        assertTrue("Biometric button disabled", button!!.isEnabled)
-        instrumentation.sendStatus(0, android.os.Bundle().apply { putString("stream", "Biometric bounds: ${button.visibleBounds}; clickable: ${button.isClickable}\n") })
-        button.click()
+        // Fingerprint must appear without a tap in 1.1. The opaque shield is
+        // committed before the service starts the biometric host.
         val promptDeadline = android.os.SystemClock.elapsedRealtime() + 15_000
         var promptVisible = false
         while (!promptVisible && android.os.SystemClock.elapsedRealtime() < promptDeadline) {
@@ -62,6 +59,7 @@ class BiometricUiProbeTest {
         assertTrue("Samsung biometric window did not appear", promptVisible)
         device.pressBack()
         assertTrue("Shield disappeared after cancellation", device.wait(Until.hasObject(By.pkg(lockerPackage).text("App is locked")), 10_000))
+        assertTrue("PIN fallback missing after cancellation", device.wait(Until.hasObject(By.pkg(lockerPackage).desc("Clear")), 10_000))
         val finishDeadline = android.os.SystemClock.elapsedRealtime() + 5_000
         var hostPresent = true
         while (hostPresent && android.os.SystemClock.elapsedRealtime() < finishDeadline) {
@@ -74,6 +72,12 @@ class BiometricUiProbeTest {
             if (hostPresent) android.os.SystemClock.sleep(50)
         }
         assertFalse("Biometric Activity did not finish behind restored shield", hostPresent)
+        if (InstrumentationRegistry.getArguments().getString("publicExit", "false") == "true") {
+            instrumentation.targetContext.startActivity(Intent(Intent.ACTION_MAIN)
+                .setClassName("app.locker.fixture.public", "app.locker.fixture.FixtureActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            assertTrue("Protected-to-public exit left a locker window", device.wait(Until.gone(By.pkg(lockerPackage)), 5_000))
+            assertTrue(device.hasObject(By.pkg("app.locker.fixture.public")))
+        }
         if ((cycle + 1) % 10 == 0) instrumentation.sendStatus(0, android.os.Bundle().apply { putString("stream", "Completed ${cycle + 1}/$cycles fingerprint cancellation cycles\n") })
         }
         device.pressHome()

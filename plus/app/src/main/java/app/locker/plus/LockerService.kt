@@ -24,6 +24,9 @@ class LockerService : AccessibilityService() {
     private var authenticating: LockEngine.Challenge? = null
     private var biometricHost: LockEngine.Challenge? = null
     private var biometricCover: LockEngine.Challenge? = null
+    private val automaticBiometric = BiometricAttemptGate()
+    val biometricAvailable get() = android.os.Build.VERSION.SDK_INT >= 29 &&
+        androidx.biometric.BiometricManager.from(this).canAuthenticate(androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG) == androidx.biometric.BiometricManager.BIOMETRIC_SUCCESS
     private val evidence = WindowEvidence()
     val homeObserved get() = evidence.foreground in homes
     private var scanQueued = false
@@ -126,6 +129,8 @@ class LockerService : AccessibilityService() {
                 val pkg = root?.packageName?.toString()
                 @Suppress("DEPRECATION")
                 root?.recycle()
+                // Our focusable overlay may own focus during a Home transition;
+                // requiring the underlying app to be focused would trap the shield.
                 if (pendingForeground?.first == window.id && pendingForeground?.second == pkg) {
                     evidence.foregroundEvent(pkg!!)
                     pendingForeground = null
@@ -144,7 +149,10 @@ class LockerService : AccessibilityService() {
             // its handoff, obscured application roots may legitimately be unavailable.
             val hosting = biometricHost == authenticating && authenticating != null && evidence.foreground == authenticating?.packageName
             if (hosting) packages.addAll(engine.visible)
-            engine.windows(evidence.visible(packages, engine.protectedApps), incomplete && !hosting)
+            val visible = evidence.visible(packages, engine.protectedApps)
+            val protectedRisk = visible.any { it in engine.protectedApps } ||
+                (evidence.foreground == null && engine.visible.any { it in engine.protectedApps })
+            engine.windows(visible, incomplete && !hosting && protectedRisk)
             if (authenticating != null && authenticating != engine.challenge) authenticating = null
             Health.interrupted.value = false
             render(received)
@@ -156,6 +164,8 @@ class LockerService : AccessibilityService() {
     }
     private fun render(received: Long = SystemClock.elapsedRealtime(), eventOrigin: Boolean = false) {
         if (!ready) return
+        automaticBiometric.retainVisible(engine.visible)
+        if (!engine.uncertain && engine.visible.none { it in engine.protectedApps }) shield.clearSessionUi()
         if (biometricCover != null && biometricCover == authenticating && biometricCover == engine.challenge && !engine.uncertain) return
         biometricCover = null
         if (biometricHost != authenticating) biometricHost = null
@@ -181,13 +191,22 @@ class LockerService : AccessibilityService() {
     fun biometric(token: LockEngine.Challenge) {
         if (android.os.Build.VERSION.SDK_INT < 29) { shield.message.value = "Use PIN on this Android version."; return }
         if (token != engine.challenge) { Diagnostics.record("biometric_stale_action"); shield.message.value = "The app changed. Try fingerprint again."; return }
-        if (authenticating != null) { Diagnostics.record("biometric_already_requested"); shield.message.value = "Biometric request pending. You can still use PIN."; return }
+        if (engine.uncertain || deviceUnavailable()) return
+        if (authenticating != null) { Diagnostics.record("biometric_already_requested"); return }
         Diagnostics.record("biometric_action_received")
+        automaticBiometric.take(token)
         authenticating = token
         try {
             startActivity(Intent(this, BiometricActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION).putExtra("generation", token.generation).putExtra("package", token.packageName))
             Diagnostics.record("biometric_launch_requested")
         } catch (_: Exception) { authenticating = null; Diagnostics.record("biometric_launch_denied"); shield.message.value = "Biometric screen unavailable. Use PIN." }
+    }
+    fun shieldReady(token: LockEngine.Challenge) {
+        if (token != engine.challenge || engine.uncertain || deviceUnavailable() || authenticating != null) return
+        if (biometricAvailable && automaticBiometric.take(token)) {
+            Diagnostics.record("biometric_automatic_requested")
+            biometric(token)
+        }
     }
     fun biometricHostStarted(token: LockEngine.Challenge): Boolean {
         if (!isCurrent(token)) return false
@@ -214,6 +233,7 @@ class LockerService : AccessibilityService() {
         val accepted = engine.authenticate(token, success)
         Diagnostics.record(if (accepted) "biometric_accepted" else "biometric_rejected_or_stale")
         shield.message.value = if (accepted) "Unlocked" else "Use PIN or try fingerprint again"
+        shield.pinFallback.value = !accepted
         render()
         finishAfterShield(finishHost)
     }

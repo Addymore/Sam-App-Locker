@@ -1,4 +1,6 @@
-# Sam App Locker 1.0
+# Sam App Locker
+
+**1.1.0-rc1 test update:** automatic fingerprint-first entry, automatic PIN confirmation with an optional Continue button, softer Samsung-inspired cards, separate Locked/Unlocked tabs, system/downloaded filters and a fix for unrelated-window shielding. [Candidate APKs](https://github.com/Addymore/Sam-App-Locker/releases/tag/v1.1.0-rc1) · [Changes and uninstall limitations](plus/UPDATE-1.1.md) · [Candidate verification](plus/RC1-VERIFICATION.md). Version 1.0.0 remains the previous stable release.
 
 An offline Kotlin/Jetpack Compose app locker for ordinary Samsung Galaxy phones. Material 3 cards, searchable app selection, strong fingerprint authentication and an app-specific PIN. Developed and tested on a Galaxy A57 running Android 17 / One UI 9.
 
@@ -6,10 +8,10 @@ An offline Kotlin/Jetpack Compose app locker for ordinary Samsung Galaxy phones.
 
 ## Choose an APK
 
-- **Release:** `app.locker.plus.release`, signed with this project's dedicated release key, not debuggable. Recommended for a new installation. Create your own PIN and enable its Accessibility service.
-- **Debug:** `app.locker.plus`, preserves the existing development installation and its settings when updated with the matching key. Intended for testing.
+- **Release (1.1 candidate):** `app.sam.locker`, signed with this project's dedicated release key, not debuggable. Recommended for a new installation. Create your own PIN and enable its Accessibility service.
+- **Debug (1.1 candidate):** `app.sam.locker.debug`, a separate debuggable installation intended for testing.
 
-These are separate installations. Moving from debug to release requires setup again; do not run both protection services together. No PIN or settings are uploaded. An existing preview PIN automatically migrates to Argon2id after the first successful PIN entry, which still performs the old slow verification once.
+The owner requested new package IDs for 1.1. They do not update the old 1.0 packages in place or inherit their private data/grants. These are separate installations. Moving from debug to release requires setup again; do not run both protection services together. No PIN or settings are uploaded. An existing preview PIN automatically migrates to Argon2id after the first successful PIN entry, which still performs the old slow verification once.
 
 ## Build the correct project
 
