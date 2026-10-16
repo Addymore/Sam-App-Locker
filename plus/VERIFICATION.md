@@ -1,5 +1,7 @@
 # Sam App Locker verification — 2026-10-16
 
+> Follow-up: the exact signed v1.0.0 release has now been installed and tested on the A57. See [RELEASE-DEVICE-VERIFICATION.md](RELEASE-DEVICE-VERIFICATION.md) for 100/100 prompt/cancellation cycles and owner-confirmed fingerprint and PIN unlock. The pending release-installation statements below describe the earlier, disconnected session; the follow-up supersedes them. Original measurements retain their original test scope.
+
 ## Release status
 
 Version **1.0.0** (versionCode 2), API 37 / Android 17. Debug and a dedicated-key signed release APK are supplied. Release signing does not certify native/OEM enforcement or untested device modes. Original MIT attribution is retained. The release identity is separate from the existing debug installation so its private data is not erased. No private signing key is included in the public artifacts.
