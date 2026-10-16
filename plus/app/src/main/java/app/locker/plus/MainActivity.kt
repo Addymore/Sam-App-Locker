@@ -13,6 +13,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -20,6 +21,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.toggleableState
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
 import androidx.fragment.app.FragmentActivity
@@ -33,7 +40,7 @@ class MainActivity : FragmentActivity() {
     private var error by mutableStateOf("")
     private var confirm: CharArray? = null
     private var confirmation by mutableStateOf(false)
-    private var revision by mutableStateOf(0)
+    private var accessibilityGranted by mutableStateOf(false)
     private var rows by mutableStateOf<List<AppRow>>(emptyList())
     private var showLog by mutableStateOf(false)
     private var lifecycleEpoch = 0L
@@ -48,14 +55,13 @@ class MainActivity : FragmentActivity() {
             runOnUiThread { rows = apps }
         }
         setContent {
-            val ignored = revision
-            LockerTheme(app.config.dynamic()) {
+            LockerTheme(app.config.state.value.dynamic) {
                 if (!loaded) Surface(Modifier.fillMaxSize()) { Box(contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
                 else if (!authorized) AuthPanel(
                     title = if (enrolled) "Welcome back" else if (confirmation) "Confirm your PIN" else "Create a private PIN",
                     subtitle = if (enrolled) "Authenticate to change apps and security settings" else "Choose 6–12 digits. This PIN is separate from your phone PIN.", error = error,
                     onPin = { pin, done -> authenticate(pin, done) })
-                else Dashboard(revision)
+                else Dashboard()
             }
         }
     }
@@ -74,7 +80,7 @@ class MainActivity : FragmentActivity() {
             runOnUiThread { if (epoch == lifecycleEpoch) { authorized = result.success; error = if (result.success) "" else result.message }; done() }
         }
     }
-    override fun onResume() { super.onResume(); revision++ }
+    override fun onResume() { super.onResume(); accessibilityGranted = accessibilityEnabled() }
     override fun onStop() { super.onStop(); lifecycleEpoch++; authorized = false; enrolled = app.vault.exists(); confirm?.fill('\u0000'); confirm = null; confirmation = false; error = "" }
     private fun launchSettings(intent: Intent) {
         runCatching { startActivity(intent) }.onFailure { runCatching { startActivity(Intent(Settings.ACTION_SETTINGS)) } }
@@ -83,11 +89,13 @@ class MainActivity : FragmentActivity() {
         val component = ComponentName(this, LockerService::class.java).flattenToString()
         return Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)?.split(':')?.any { it.equals(component, true) } == true
     }
-    @Composable private fun Dashboard(version: Int) {
+    @Composable private fun Dashboard() {
         var search by remember { mutableStateOf("") }
-        val selected = app.config.apps()
-        val active = Health.connected.value && !Health.interrupted.value && accessibilityEnabled()
-        val status = if (active) "Protection active" else if (Health.interrupted.value || accessibilityEnabled()) "Protection interrupted" else "Setup incomplete"
+        var showingApps by remember { mutableStateOf(true) }
+        val settings by app.config.state
+        val selected = settings.apps
+        val active = Health.connected.value && !Health.interrupted.value && accessibilityGranted
+        val status = if (active) "Protection active" else if (Health.interrupted.value || accessibilityGranted) "Protection interrupted" else "Setup incomplete"
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Box(Modifier.fillMaxSize().safeDrawingPadding(), contentAlignment = Alignment.TopCenter) {
                 LazyColumn(Modifier.widthIn(max = 840.dp).fillMaxWidth(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -97,6 +105,29 @@ class MainActivity : FragmentActivity() {
                         Text(if (active) "Window monitoring is connected. Protection starts after Android reports a window; native zero-frame protection is not guaranteed." else Health.detail.value)
                         Text("Pop-up / split screen: experimental. DeX and external displays are unsupported.", style = MaterialTheme.typography.bodySmall)
                     } }
+                    item { Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        FilledTonalButton(onClick = { showingApps = true }, modifier = Modifier.weight(1f)) { Text("Apps") }
+                        FilledTonalButton(onClick = { showingApps = false }, modifier = Modifier.weight(1f)) { Text("Settings") }
+                    } }
+                    if (showingApps) {
+                        item { Text("Choose your apps", style = MaterialTheme.typography.headlineSmall)
+                            OutlinedTextField(search, { search = it }, label = { Text("Search apps") }, modifier = Modifier.fillMaxWidth(), singleLine = true) }
+                        items(rows.filter { it.label.contains(search, true) || it.pkg.contains(search, true) }, key = { it.pkg }) { row ->
+                            Card(shape = MaterialTheme.shapes.medium) { Row(Modifier.fillMaxWidth()
+                                .toggleable(value = row.pkg in selected, role = Role.Switch, onValueChange = { if (authorized) app.config.toggle(row.pkg, it) })
+                                .clearAndSetSemantics {
+                                    contentDescription = "Lock ${row.label}, ${row.pkg}"
+                                    stateDescription = if (row.pkg in selected) "Locked" else "Not locked"
+                                    toggleableState = ToggleableState(row.pkg in selected)
+                                    role = Role.Switch
+                                }
+                                .padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                Image(row.icon.asImageBitmap(), null, Modifier.size(44.dp))
+                                Column(Modifier.weight(1f)) { Text(row.label, style = MaterialTheme.typography.titleMedium); Text(row.pkg, style = MaterialTheme.typography.bodySmall) }
+                                Switch(checked = row.pkg in selected, onCheckedChange = null)
+                            } }
+                        }
+                    } else {
                     item { LockerCard("Setup & permissions") {
                         Text("Accessibility: ${if (accessibilityEnabled()) "enabled" else "not enabled"}; service: ${if (Health.connected.value) "connected" else "disconnected"}")
                         Text("Window access identifies app packages only. No screen text, passwords, or child views are read. An opaque accessibility overlay covers locked apps.")
@@ -113,16 +144,16 @@ class MainActivity : FragmentActivity() {
                     item { LockerCard("Relock rules") {
                         LockEngine.Rule.entries.forEach { rule ->
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                RadioButton(selected = app.config.rule() == rule, onClick = { if (authorized) { app.config.prefs.edit().putString("rule", rule.name).apply(); revision++ } })
+                                RadioButton(selected = settings.rule == rule, onClick = { if (authorized) app.config.prefs.edit().putString("rule", rule.name).apply() })
                                 Text(when (rule) { LockEngine.Rule.ON_EXIT -> "Immediately after leaving"; LockEngine.Rule.SCREEN_OFF -> "On screen off / device lock"; LockEngine.Rule.TIMEOUT -> "After timeout" })
                             }
                         }
-                        if (app.config.rule() == LockEngine.Rule.TIMEOUT) {
-                            Text("Timeout: ${app.config.seconds()} seconds")
-                            Slider(value = app.config.seconds().toFloat(), valueRange = 15f..600f, onValueChange = { if (authorized) { app.config.prefs.edit().putInt("seconds", it.toInt()).apply(); revision++ } })
+                        if (settings.rule == LockEngine.Rule.TIMEOUT) {
+                            Text("Timeout: ${settings.seconds} seconds")
+                            Slider(value = settings.seconds.toFloat(), valueRange = 15f..600f, onValueChange = { if (authorized) app.config.prefs.edit().putInt("seconds", it.toInt()).apply() })
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Switch(checked = app.config.shared(), onCheckedChange = { if (authorized) { app.config.prefs.edit().putBoolean("shared", it).apply(); revision++ } })
+                            Switch(checked = settings.shared, onCheckedChange = { if (authorized) app.config.prefs.edit().putBoolean("shared", it).apply() })
                             Text("Shared session (less private)", Modifier.padding(start = 12.dp))
                         }
                         Text("Default: authenticate each app separately. Screen off and service/process restart always clear every session.")
@@ -134,7 +165,7 @@ class MainActivity : FragmentActivity() {
                     } }
                     item { LockerCard("Appearance & diagnostics") {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Switch(checked = app.config.dynamic(), onCheckedChange = { if (authorized) { app.config.prefs.edit().putBoolean("dynamic", it).apply(); revision++ } })
+                            Switch(checked = settings.dynamic, onCheckedChange = { if (authorized) app.config.prefs.edit().putBoolean("dynamic", it).apply() })
                             Text("Dynamic colors", Modifier.padding(start = 12.dp))
                         }
                         Text("Light and dark themes follow your phone. Diagnostic timings measure draw submission, not actual display presentation.")
@@ -143,14 +174,6 @@ class MainActivity : FragmentActivity() {
                         Text("Notifications, widgets, Recents thumbnails and external displays are separate exposure surfaces. This app does not secure them.")
                         Text("Based on AppLock • © 2023–2025 Pranav Purwar • MIT License", style = MaterialTheme.typography.labelSmall)
                     } }
-                    item { Text("Choose your apps", style = MaterialTheme.typography.headlineSmall)
-                        OutlinedTextField(search, { search = it }, label = { Text("Search apps") }, modifier = Modifier.fillMaxWidth(), singleLine = true) }
-                    items(rows.filter { it.label.contains(search, true) || it.pkg.contains(search, true) }, key = { it.pkg }) { row ->
-                        Card(shape = MaterialTheme.shapes.medium) { Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                            Image(row.icon.asImageBitmap(), null, Modifier.size(44.dp))
-                            Column(Modifier.weight(1f)) { Text(row.label, style = MaterialTheme.typography.titleMedium); Text(row.pkg, style = MaterialTheme.typography.bodySmall) }
-                            Switch(checked = row.pkg in selected, onCheckedChange = { if (authorized) { app.config.toggle(row.pkg, it); revision++ } }, modifier = Modifier.semantics { contentDescription = "Lock ${row.label}" })
-                        } }
                     }
                 }
             }

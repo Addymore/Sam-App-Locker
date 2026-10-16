@@ -27,6 +27,7 @@ class PrivacyShield(private val service: LockerService) : LifecycleOwner, ViewMo
     private val appLabel = mutableStateOf("")
     private var receipt = 0L
     private var measured = false
+    private var attachment = 0L
     private lateinit var compose: ComposeView
     private val frame = object : FrameLayout(service) {
         override fun dispatchDraw(canvas: android.graphics.Canvas) {
@@ -59,7 +60,7 @@ class PrivacyShield(private val service: LockerService) : LifecycleOwner, ViewMo
             } }
         }
     }
-    fun show(challenge: LockEngine.Challenge?, unknown: Boolean, received: Long) {
+    fun show(challenge: LockEngine.Challenge?, unknown: Boolean, received: Long, eventOrigin: Boolean = false) {
         if (token.value != challenge) {
             message.value = ""; appLabel.value = ""
             if (challenge != null) service.app.io.execute {
@@ -69,12 +70,30 @@ class PrivacyShield(private val service: LockerService) : LifecycleOwner, ViewMo
         }
         token.value = challenge; uncertain.value = unknown
         if (attached) return
-        receipt = received; measured = false
+        receipt = received; measured = false; attachment++
         val params = WindowManager.LayoutParams(-1, -1, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_SECURE or WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED, PixelFormat.OPAQUE)
         params.setTitle("Sam App Locker privacy shield")
         wm.addView(frame, params); attached = true
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            frame.viewTreeObserver.registerFrameCommitCallback {
+                Diagnostics.record(if (eventOrigin) "shield_event_frame_committed" else "shield_scan_frame_committed", SystemClock.elapsedRealtime() - received)
+            }
+        }
         registry.handleLifecycleEvent(Lifecycle.Event.ON_START); registry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+    }
+    /** Never finish an opaque auth host until its replacement frame is submitted. */
+    fun afterOpaqueFrame(action: () -> Unit) {
+        if (!attached) return
+        // isHardwareAccelerated can still be false immediately after addView.
+        // The window explicitly requests hardware rendering; its floating observer
+        // carries this callback into the attached tree for the very first frame.
+        if (android.os.Build.VERSION.SDK_INT < 29) return
+        val currentAttachment = attachment
+        frame.viewTreeObserver.registerFrameCommitCallback {
+            frame.post { if (attached && attachment == currentAttachment) { Diagnostics.record("shield_return_frame_committed"); action() } }
+        }
+        frame.invalidate()
     }
     fun hide() {
         if (!attached) return

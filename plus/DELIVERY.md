@@ -2,7 +2,7 @@
 
 App: **Sam App Locker**, version 1.0.0-preview, application ID `app.locker.plus`.
 
-The debug APK is for review and device testing. Its SHA-256 is `BCC4C9DE353FB1D5A5476F196064A16702DDD45703D2DFCC197DE4B3D9D866CD`. No production signing identity or release APK is included.
+The debug APK is for review and device testing. See the accompanying SHA256SUMS.txt for artifact hashes. No production signing identity or release APK is included.
 
 ## Git provenance
 
@@ -16,6 +16,9 @@ Implementation commits:
 
 - `d658a97` — Add Android 17 Sam App Locker with token-bound accessibility shield.
 - `9f9754c` — Preserve shield through delayed Samsung window snapshots and validate Home transitions.
+- `1ece650` — Recreate overlay composition on window attachment and exercise biometric controls through the UI.
+
+The accompanying COMMITS.txt and numbered patches include subsequent Samsung handoff, picker-state and verification changes. They identify the exact delivered source snapshot.
 
 The source archive includes the buildable standalone `plus/` project and upstream modules retained for comparison. MIT licensing and original copyright remain intact. Build `plus/`, not the original root application. See SETUP.md for exact build and installation steps.
 

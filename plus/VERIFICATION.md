@@ -21,7 +21,7 @@ Installable **debug preview**, not a production-certified security boundary. API
 - Android lint completed without errors. Dependency-update, Kotlin-style and compatibility warnings remain; this is not a warning-free build.
 - Real-device CredentialTest passed (1 test, 22.164 seconds): encrypted credential round trip, incorrect PIN, persistent failed-attempt limiter and fresh-vault penalty restoration.
 - The final physical DeviceCyclesTest passed **100/100 cycles**, 367.178 seconds including owner reconnect wait. No missed challenge, missed attached shield, stale PIN result, delayed duplicate lock or additional removal was detected inside that test's assertion windows. These are service-integration assertions, not a claim of zero visible flashes. Code commit: `9f9754c`.
-- Normal debug APK installed successfully as `app.locker.plus`, label **Sam App Locker**. The isolated testbed and instrumentation packages were removed after evidence collection.
+- Normal debug APK installed successfully as `app.locker.plus`, label **Sam App Locker**. Subsequent fixes were installed in place, retaining its signing identity and owner data. The isolated testbed was reinstalled for UI regression tests.
 
 ## Completed-run timings
 
@@ -40,7 +40,15 @@ The owner completed normal-app PIN setup and accessibility enablement. A live `s
 
 ## Failures found during development
 
-The original implementation had delayed detection, main-thread work, overlay removal before biometric handoff and race-prone session decisions; see ARCHITECTURE.md. Initial physical testing of the new implementation also exposed delayed Samsung window snapshots during launches. A protected foreground event now installs the opaque backing shield before inspecting window roots; a package-only foreground hint survives temporarily stale snapshots. The Compose instance survives overlay detachment.
+The original implementation had delayed detection, main-thread work, overlay removal before biometric handoff and race-prone session decisions; see ARCHITECTURE.md. Initial physical testing of the new implementation also exposed delayed Samsung window snapshots during launches. A protected foreground event now installs the opaque backing shield before inspecting window roots; a package-only foreground hint survives temporarily stale snapshots.
+
+The owner subsequently reported an unresponsive fingerprint button. An independent UI test reproduced it: the button was present and enabled, but no tap callback or system prompt appeared after window reuse. The preceding service-level 100-cycle test did not catch this because it invoked PIN verification directly. The retained Compose composition was replaced with detach-time disposal: the native opaque backing is still reused, but interactive content is rebuilt after its first frame on each window attachment. This prevents preserving a composition/input scope whose window has gone away. Button-level regression results are recorded separately; earlier 100-cycle measurements are not silently relabelled as results from this revised APK.
+
+The owner also reported delayed app-selection switches. The UI previously read a plain preference snapshot and used a revision counter that was not reliably consumed by the skipped dashboard composition. It now observes immutable Compose state and immediately updates the selected set. Window inspection is queued outside the selection callback. Apps and Settings have separate dashboard views, reducing the scrolling needed to reach the picker.
+
+Further biometric testing found that Samsung's type-2017 prompt could not take focus above the accessibility overlay. Coverage now transfers to an opaque Activity after its first hardware frame commit; cancellation restores the overlay and waits for its frame before finishing the Activity. The first handoff revision passed two prompt/cancel interactions but stalled on the third: querying hardware acceleration immediately after addView returned false and skipped the completion callback, leaving a stale Activity. The callback is now registered on the pre-attachment observer, which Android merges into the attached view tree. This failure is retained in device-ui-handoff-smoke.txt.
+
+Test-harness failures were also distinguished from application failures: default UiAutomation access suppressed the owner's service, an early Back event closed the picker before the keyboard appeared, and an unconditional scroll attempted to scroll a fully visible two-row filtered list. The runner now consistently preserves accessibility services, validates PIN digit-count feedback, observes the IME before dismissing it and scrolls only when needed.
 
 A stricter physical run stopped at zero-based cycle 60 because its shield-removal counter increased twice. The test previously accepted the already-unlocked app as evidence that Home had arrived. The next run explicitly waits for a Home event, and diagnostic categories identify foreground changes and releases. The failed run remains a failure in the supplied evidence; it is not counted as a successful 100-cycle run. Conservative unknown-window shielding can still briefly flash during a Home transition.
 

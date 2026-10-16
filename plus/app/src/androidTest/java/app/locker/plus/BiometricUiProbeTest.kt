@@ -21,6 +21,7 @@ class BiometricUiProbeTest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         check(instrumentation.targetContext.packageName.endsWith(".testbed"))
         Configurator.getInstance().uiAutomationFlags = UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES
+        Configurator.getInstance().waitForIdleTimeout = 100
         val device = UiDevice.getInstance(instrumentation)
         device.wakeUp()
         val keyguard = instrumentation.targetContext.getSystemService(android.app.KeyguardManager::class.java)
@@ -38,10 +39,35 @@ class BiometricUiProbeTest {
         assertTrue("Biometric button disabled", button!!.isEnabled)
         instrumentation.sendStatus(0, android.os.Bundle().apply { putString("stream", "Biometric bounds: ${button.visibleBounds}; clickable: ${button.isClickable}\n") })
         button.click()
-        assertTrue("System prompt title did not appear", device.wait(Until.hasObject(By.text("Unlock Sam App Locker")), 15_000))
+        val promptDeadline = android.os.SystemClock.elapsedRealtime() + 15_000
+        var promptVisible = false
+        while (!promptVisible && android.os.SystemClock.elapsedRealtime() < promptDeadline) {
+            promptVisible = instrumentation.getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES).windows.any { window ->
+                val root = window.root
+                val isPrompt = root?.packageName?.toString() == "com.samsung.android.biometrics.app.setting" && (window.isActive || window.isFocused)
+                @Suppress("DEPRECATION")
+                root?.recycle()
+                isPrompt
+            }
+            if (!promptVisible) android.os.SystemClock.sleep(50)
+        }
+        assertTrue("Samsung biometric window did not appear", promptVisible)
         device.pressBack()
         assertTrue("Shield disappeared after cancellation", device.wait(Until.hasObject(By.text("App is locked")), 10_000))
+        val finishDeadline = android.os.SystemClock.elapsedRealtime() + 5_000
+        var hostPresent = true
+        while (hostPresent && android.os.SystemClock.elapsedRealtime() < finishDeadline) {
+            hostPresent = instrumentation.getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES).windows.any { window ->
+                val root = window.root
+                val isHost = window.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION && root?.packageName?.toString() == "app.locker.plus"
+                @Suppress("DEPRECATION") root?.recycle()
+                isHost
+            }
+            if (hostPresent) android.os.SystemClock.sleep(50)
+        }
+        assertFalse("Biometric Activity did not finish behind restored shield", hostPresent)
         if ((cycle + 1) % 10 == 0) instrumentation.sendStatus(0, android.os.Bundle().apply { putString("stream", "Completed ${cycle + 1}/$cycles fingerprint cancellation cycles\n") })
         }
+        device.pressHome()
     }
 }
