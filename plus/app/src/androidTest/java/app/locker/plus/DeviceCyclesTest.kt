@@ -41,7 +41,9 @@ class DeviceCyclesTest {
         val report = StringBuilder("cycle,target,entry,challenge_observed_ms,pin_roundtrip_ms\n")
         repeat(100) { cycle ->
             device.pressHome()
-            await("Home did not clear challenge") { LockerService.instance?.engine?.challenge == null }
+            await("Home did not clear shield") { LockerService.instance?.homeObserved == true && LockerService.instance?.engine?.shieldRequired == false && LockerService.instance?.shieldAttached == false }
+            var removalsBefore = 0
+            main { removalsBefore = LockerService.instance!!.shieldRemovals }
             val target = targets[cycle % targets.size]
             val intent = when (cycle % 3) {
                 0 -> Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
@@ -61,8 +63,13 @@ class DeviceCyclesTest {
             await("Shield remained attached cycle $cycle") { LockerService.instance?.shieldAttached == false }
             // Allow subsequent window callbacks to expose repeated-prompt regressions.
             SystemClock.sleep(150)
-            main { assertFalse("Duplicate lock cycle $cycle", LockerService.instance!!.engine.shieldRequired) }
+            main {
+                assertFalse("Duplicate lock cycle $cycle", LockerService.instance!!.engine.shieldRequired)
+                assertEquals("Unauthenticated shield removal cycle $cycle", 1, LockerService.instance!!.shieldRemovals - removalsBefore)
+            }
             report.append("$cycle,$target,${cycle % 3},$observed,${SystemClock.elapsedRealtime()-authStart}\n")
+            File(context.filesDir, "cycles.csv").writeText(report.toString())
+            if (cycle % 10 == 9) instrumentation.sendStatus(0, android.os.Bundle().apply { putString("stream", "Completed ${cycle + 1}/100 cycles\n") })
         }
         File(context.filesDir, "cycles.csv").writeText(report.toString())
         File(context.filesDir, "diagnostics.csv").writeText(Diagnostics.text())

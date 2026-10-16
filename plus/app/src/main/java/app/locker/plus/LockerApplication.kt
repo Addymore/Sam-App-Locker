@@ -36,7 +36,7 @@ object Health {
 object Diagnostics {
     private val rows = ArrayDeque<String>()
     @Synchronized fun record(event: String, durationMs: Long? = null) {
-        if (rows.size >= 250) rows.removeFirst()
+        if (rows.size >= 1000) rows.removeFirst()
         rows.addLast("${SystemClock.elapsedRealtime()},$event,${durationMs ?: ""}")
         android.util.Log.i("SamLocker", rows.last())
     }

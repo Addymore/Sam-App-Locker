@@ -20,13 +20,18 @@ class LockerService : AccessibilityService() {
     private var homes = emptySet<String>()
     private var ready = false
     val shieldAttached get() = ready && shield.isAttached
+    var shieldRemovals = 0; private set
     private var authenticating: LockEngine.Challenge? = null
+    private val evidence = WindowEvidence()
+    val homeObserved get() = evidence.foreground in homes
+    private var scanQueued = false
+    private val transientPackages = setOf("android", "com.android.systemui", "com.android.permissioncontroller", "com.google.android.permissioncontroller", "com.android.intentresolver")
     private val recovery = setOf("com.android.settings", "com.android.phone", "com.samsung.android.dialer", "com.google.android.dialer", "com.samsung.android.incallui", "com.android.emergency")
     private val timer = Runnable { engine.tick(); render() }
     private val preferences = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ -> configure() }
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == Intent.ACTION_SCREEN_OFF) { authenticating = null; engine.screenLocked(); render(); Diagnostics.record("screen_locked") }
+            if (intent?.action == Intent.ACTION_SCREEN_OFF) { evidence.clear(); authenticating = null; engine.screenLocked(); render(); Diagnostics.record("screen_locked") }
             else scan(null)
         }
     }
@@ -52,11 +57,33 @@ class LockerService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (!ready || event == null) return
         if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && event.eventType != AccessibilityEvent.TYPE_WINDOWS_CHANGED) return
-        scan(event)
+        val received = SystemClock.elapsedRealtime()
+        val pkg = event.packageName?.toString()
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && pkg != null) {
+            if (pkg in recovery) {
+                evidence.clear(); authenticating = null; engine.screenLocked(); render(); return
+            }
+            if (pkg !in transientPackages && pkg !in keyboards && pkg != packageName) {
+                evidence.foregroundEvent(pkg)
+                Diagnostics.record(if (pkg in homes) "foreground_home" else if (pkg in engine.protectedApps) "foreground_protected" else "foreground_other")
+            }
+            if (pkg == packageName && event.className == MainActivity::class.java.name && authenticating == null) evidence.foregroundEvent(pkg)
+            if (pkg in engine.protectedApps && !getSystemService(KeyguardManager::class.java).isKeyguardLocked) {
+                // Immediate package-set decision before any window-root binder calls.
+                engine.windows(evidence.visible(engine.visible, engine.protectedApps))
+                render(received)
+            }
+        }
+        // Coalesce synchronous messages behind the newly scheduled view traversal.
+        // Copy no AccessibilityEvent (which can carry private text).
+        if (!scanQueued) {
+            scanQueued = true
+            handler.post { scanQueued = false; if (ready) scan(null) }
+        }
     }
     private fun scan(event: AccessibilityEvent?) {
         val received = SystemClock.elapsedRealtime()
-        if (getSystemService(KeyguardManager::class.java).isKeyguardLocked) { engine.screenLocked(); authenticating = null; render(); return }
+        if (getSystemService(KeyguardManager::class.java).isKeyguardLocked) { evidence.clear(); engine.screenLocked(); authenticating = null; render(); return }
         val eventPackage = event?.packageName?.toString()
         // Recovery/settings and launcher remain under owner control; never trap a user.
         if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && eventPackage in recovery) {
@@ -83,8 +110,8 @@ class LockerService : AccessibilityService() {
             // During biometric handoff Android may omit obscured app windows. Retain the
             // challenge only while our auth Activity owns focus, never on unrelated switches.
             if (ownActive && authenticating != null) packages.addAll(engine.visible)
-            if (appWindowCount == 0 && eventPackage !in homes) incomplete = true
-            engine.windows(packages, incomplete)
+            if (appWindowCount == 0 && evidence.foreground !in homes && evidence.foreground != packageName) incomplete = true
+            engine.windows(evidence.visible(packages, engine.protectedApps), incomplete)
             if (authenticating != null && authenticating != engine.challenge) authenticating = null
             Health.interrupted.value = false
             render(received)
@@ -99,7 +126,7 @@ class LockerService : AccessibilityService() {
         if (engine.shieldRequired) {
             try { shield.show(engine.challenge, engine.uncertain, received) }
             catch (_: Exception) { Health.interrupted.value = true; Health.detail.value = "Privacy shield unavailable"; Diagnostics.record("shield_failed"); performGlobalAction(GLOBAL_ACTION_HOME) }
-        } else shield.hide()
+        } else { if (shield.isAttached) { shieldRemovals++; Diagnostics.record(if (homeObserved) "shield_release_home" else "shield_release_clear") }; shield.hide() }
         handler.removeCallbacks(timer)
         engine.nextExpiry()?.let { handler.postDelayed(timer, (it - SystemClock.elapsedRealtime()).coerceAtLeast(1)) }
     }

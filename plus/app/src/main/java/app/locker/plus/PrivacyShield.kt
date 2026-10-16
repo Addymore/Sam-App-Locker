@@ -47,6 +47,7 @@ class PrivacyShield(private val service: LockerService) : LifecycleOwner, ViewMo
         frame.setViewTreeLifecycleOwner(this); frame.setViewTreeSavedStateRegistryOwner(this); frame.setViewTreeViewModelStoreOwner(this)
         frame.setBackgroundColor(if (service.resources.configuration.uiMode and 0x30 == 0x20) 0xff17151d.toInt() else 0xfff6f3fa.toInt())
         compose = ComposeView(service).apply {
+            setViewCompositionStrategy(androidx.compose.ui.platform.ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
             setContent { LockerTheme(service.app.config.dynamic()) {
                 val current = token.value
                 AuthPanel(title = if (uncertain.value) "Window cannot be verified" else "App is locked", subtitle = if (current == null) "Return home and open the app in full screen." else appLabel.value.ifEmpty { current.packageName },
