@@ -1,0 +1,1 @@
+<resources><style name="Theme.Locker" parent="android:style/Theme.Material.NoActionBar"><item name="android:fontFamily">sans</item><item name="android:windowBackground">#17151D</item><item name="android:colorAccent">#CDC0FF</item><item name="android:windowAnimationStyle">@null</item><item name="android:windowDisablePreview">true</item></style></resources>

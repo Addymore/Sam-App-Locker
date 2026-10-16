@@ -1,0 +1,12 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <queries><intent><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent><intent><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.HOME"/></intent></queries>
+    <application android:name=".LockerApplication" android:label="${appLabel}" android:icon="@drawable/ic_locker" android:allowBackup="false" android:fullBackupContent="false" android:dataExtractionRules="@xml/data_extraction_rules" android:theme="@style/Theme.Locker" android:supportsRtl="true">
+        <activity android:name=".MainActivity" android:exported="true"><intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter></activity>
+        <activity android:name=".BiometricActivity" android:exported="false" android:excludeFromRecents="true" android:taskAffinity="app.locker.plus.auth" android:launchMode="singleTask" android:theme="@style/Theme.Locker" />
+        <service android:name=".LockerService" android:exported="true" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE" android:label="${appLabel}">
+            <intent-filter><action android:name="android.accessibilityservice.AccessibilityService"/></intent-filter>
+            <meta-data android:name="android.accessibilityservice" android:resource="@xml/accessibility"/>
+        </service>
+    </application>
+</manifest>
