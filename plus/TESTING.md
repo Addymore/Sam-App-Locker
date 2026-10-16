@@ -27,6 +27,18 @@ PickerUiTest enrolls a known synthetic PIN only in the testbed, authenticates th
 
 BiometricUiProbeTest alternates the protected fixture apps using the normal installation. Each cycle must find the fingerprint action, observe Samsung's active/focused biometric window, cancel it, find the lock shield again and confirm the authentication Activity has gone. It uses `FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES` on every UI automation access. A successful run does not prove fingerprint matching, physical frame ordering or security in untested modes. Fingerprint success still needs the owner's finger.
 
+### Signed release package
+
+Install the published signed release without replacing its APK with a debug build. Have the owner create their private PIN, enable only its service and select both fixture packages. If fixtures were installed while the app picker was already open, reopen the activity to refresh the installed-app list before selecting them. Keep the isolated testbed Accessibility service disabled.
+
+The runner accepts only the known debug/release package IDs and checks the specified package's shield and authentication host. Test the release using:
+
+```sh
+adb shell am instrument --user 0 -w -r -e class app.locker.plus.BiometricUiProbeTest -e lockerPackage app.locker.plus.release -e mixedEntries true -e cycles 100 app.locker.plus.testbed.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+`mixedEntries=true` alternates explicit MAIN, VIEW deep-link and SEND intents across the two fixtures. These are direct intent launches, not taps on launcher icons, notifications or share-chooser UI. Every cycle includes Home, one protected launch, a fingerprint action and cancellation. The runner never reads or supplies the owner's PIN. Actual PIN and fingerprint success require a separate owner check.
+
 Do not run all instrumentation tests indiscriminately on an owner-configured phone. The older DeviceCyclesTest intentionally targets the testbed service and requires its separate owner-controlled Accessibility setup. Restarting that instrumentation process can leave Samsung's testbed service enabled but disconnected. Its historical results are retained separately.
 
 ## Timings and recordings
