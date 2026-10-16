@@ -1,30 +1,33 @@
-# Sam App Locker
+# Sam App Locker 1.0
 
-A Kotlin / Jetpack Compose app-locking implementation for ordinary unrooted Samsung phones, developed from [aload0/AppLock](https://github.com/aload0/AppLock).
+An offline Kotlin/Jetpack Compose app locker for ordinary Samsung Galaxy phones. Material 3 cards, searchable app selection, strong fingerprint authentication and an app-specific PIN. Developed and tested on a Galaxy A57 running Android 17 / One UI 9.
 
-**Build the standalone `plus/` project.** The original `app/`, `appintro/`, `hidden-api/`, and `patternlock/` modules remain for source comparison; they are not compiled into Sam App Locker.
+[Download debug and signed release APKs](https://github.com/Addymore/Sam-App-Locker/releases/tag/v1.0.0) · [Samsung setup](plus/SETUP.md) · [Verification and known limits](plus/VERIFICATION.md) · [Security architecture](plus/ARCHITECTURE.md)
 
-- Distinct application ID: `app.locker.plus`
-- Compile/target Android 17, API 37; minimum API 26
-- Event-driven accessibility monitoring and an opaque accessibility privacy shield
-- PIN with salted PBKDF2, Android Keystore encryption, persistent failure limits
-- Token-bound per-app sessions, optional shared sessions, explicit relock rules
-- Strong AndroidX biometrics where supported by the device
-- No network permission, ads, analytics, device admin, Shizuku, usage polling or foreground service in the normal APK
+## Choose an APK
 
-This is a development build pending the verification matrix described below. It cannot provide OEM/system enforcement or guarantee zero initial content frames. Multiwindow is experimental; DeX and external displays are unsupported. Force-stop, safe mode, owner uninstall and service revocation interrupt protection. Notifications, widgets and other apps' Recents thumbnails are separate surfaces.
+- **Release:** `app.locker.plus.release`, signed with this project's dedicated release key, not debuggable. Recommended for a new installation. Create your own PIN and enable its Accessibility service.
+- **Debug:** `app.locker.plus`, preserves the existing development installation and its settings when updated with the matching key. Intended for testing.
 
-## Build and review
+These are separate installations. Moving from debug to release requires setup again; do not run both protection services together. No PIN or settings are uploaded. An existing preview PIN automatically migrates to Argon2id after the first successful PIN entry, which still performs the old slow verification once.
 
-See [setup and build instructions](plus/SETUP.md), [architecture and upstream audit](plus/ARCHITECTURE.md), [test protocol](plus/TESTING.md), and [actual verification results and limitations](plus/VERIFICATION.md).
+## Build the correct project
 
-```text
+The app is in **`plus/`**. The original modules are retained for source comparison.
+
+```sh
 cd plus
-gradlew.bat :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
+./gradlew :app:assembleDebug :app:assembleRelease :app:testDebugUnitTest :app:lintDebug :app:lintRelease
 ```
 
-No release signing key is included. Keep Play Protect enabled. Accessibility is granted explicitly by the device owner through Settings.
+Requires JDK 17 and Android SDK 37. Use `gradlew.bat` on Windows. The release build is unsigned until signed with your private key; see [release instructions](plus/RELEASING.md). No signing keys are stored here.
+
+## Protection boundaries
+
+Accessibility window events trigger an opaque privacy shield, with serialized per-app sessions and stale-authentication rejection. This is third-party enforcement, not Samsung system app lock. Recordings confirmed brief target-content exposure during some launches. Notifications, widgets and other apps' Recents previews are separate exposure surfaces. Split screen/pop-up remain experimental; external displays/DeX are unsupported. Force-stop, safe mode, service interruption and owner uninstall can interrupt protection.
+
+The owner controls setup, disablement and removal. No ads, analytics, network permission, device admin, usage polling or unrelated personal-data permissions are included.
 
 ## Attribution
 
-MIT License. Original copyright (c) 2023-2025 Pranav Purwar. The original [LICENSE](LICENSE) is preserved and packaged in the new APK. Reused upstream Kotlin includes LockedAppsRepository, AppSearchManager, and the lifecycle-owner pattern adapted for the overlay. The original upstream source snapshot is retained in this repository's history.
+Fork of [aload0/AppLock](https://github.com/aload0/AppLock). Original MIT license and Pranav Purwar copyright remain in [LICENSE](LICENSE); the original readme is preserved in [UPSTREAM_README.md](UPSTREAM_README.md). Useful upstream Kotlin repository/search code is retained. Argon2Kt and native Argon2 license notices are bundled in the APK assets.

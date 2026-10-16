@@ -1,37 +1,42 @@
 # Source and delivery
 
-App: **Sam App Locker**, version 1.0.0-preview, application ID `app.locker.plus`.
+**Sam App Locker 1.0.0**, versionCode 2.
 
-The debug APK is for review and device testing. See the accompanying SHA256SUMS.txt for artifact hashes. No production signing identity or release APK is included.
+- Repository/fork: https://github.com/Addymore/Sam-App-Locker
+- Implementation branch: https://github.com/Addymore/Sam-App-Locker/tree/feature/app-locker-plus
+- Versioned source: https://github.com/Addymore/Sam-App-Locker/tree/v1.0.0
+- APKs and source/evidence downloads: https://github.com/Addymore/Sam-App-Locker/releases/tag/v1.0.0
 
-## Git provenance
+## APK identities
 
-Upstream: https://github.com/aload0/AppLock
+| Artifact | Application ID | Signing / use |
+| --- | --- | --- |
+| Sam-App-Locker-1.0.0-debug.apk | app.locker.plus | Existing debug identity; in-place preview upgrade preserving data |
+| Sam-App-Locker-1.0.0-release.apk | app.locker.plus.release | Dedicated RSA-3072 release key; not debuggable; separate setup |
 
-Base commit: `52e028af66d135ebf6ca98aa87d8684c8feffdbe`.
+Release certificate SHA-256: `98c298eccbd29e15e83668331e74220df2471d37bb410855c71b077e989067ed`.
 
-Local branch: `feature/app-locker-plus`.
+See SHA256SUMS.txt for artifact hashes and evidence for signature verification. The release key and its protected password remain outside the repository and public archives. Back them up securely for future updates. Release signing does not provide OEM privileges or certify untested behavior.
 
-Implementation commits:
+The existing phone installation receives the debug update to preserve the owner's PIN and selections. Switching to the separate release requires a new PIN/setup because Android Keystore data cannot be transferred between these app identities. Disable the debug service when switching; do not run two protection services simultaneously.
 
-- `d658a97` — Add Android 17 Sam App Locker with token-bound accessibility shield.
-- `9f9754c` — Preserve shield through delayed Samsung window snapshots and validate Home transitions.
-- `1ece650` — Recreate overlay composition on window attachment and exercise biometric controls through the UI.
+## Source and provenance
 
-The accompanying COMMITS.txt and numbered patches include subsequent Samsung handoff, picker-state and verification changes. They identify the exact delivered source snapshot.
+Upstream: https://github.com/aload0/AppLock, base `52e028af66d135ebf6ca98aa87d8684c8feffdbe`.
 
-The source archive includes the buildable standalone `plus/` project and upstream modules retained for comparison. MIT licensing and original copyright remain intact. Build `plus/`, not the original root application. See SETUP.md for exact build and installation steps.
+MIT licensing and original copyright remain intact. The source archive contains the standalone `plus/` app and original modules retained for comparison. Build **plus/**, not the original root app. See SETUP.md, TESTING.md and RELEASING.md.
 
-## Remaining GitHub step
+Key implementation commits preceding version 1:
 
-The available GitHub connector exposes no repository-fork creation operation. No remote fork or branch URL was created. The local branch and supplied patches are ready for review.
+- d658a97: Android 17 implementation and token-bound accessibility shield.
+- 9f9754c: delayed Samsung window snapshots and Home-transition regression checks.
+- 1ece650: overlay composition/input lifecycle fix.
+- 7c4630c: responsive picker state and Samsung biometric coverage handoffs.
 
-1. Create your fork at https://github.com/aload0/AppLock/fork.
-2. In this existing checkout, add your fork as a remote and push `feature/app-locker-plus` to it. Use your authenticated Git setup; no token belongs in source or chat.
-3. Alternatively clone your fork, create a branch from the base commit above, and apply the supplied numbered patches using `git am`.
+COMMITS.txt and numbered patches identify the subsequent version-1 Argon2id migration, release packaging and complete verification snapshot. GitHub's v1.0.0 tag identifies the delivered source.
 
-The working checkout is shallow at the upstream base; this does not remove the preserved parent relationship of the implementation commits. The source ZIP is a source snapshot, not a fabricated hosted fork.
+## Evidence and boundaries
 
-## Evidence
+VERIFICATION.md separates the original 100 service/PIN cycles, 100 biometric UI cycles, 20 picker interactions, manually confirmed fingerprint success, version-1 100 PIN checks and recording analysis. Public evidence contains operational timings, synthetic test results and colour-only video classifications. It excludes private signing material, owner PIN data and raw launcher-containing video.
 
-VERIFICATION.md distinguishes JVM tests, real-device service integration, recording analysis and unverified device paths. The evidence folder accompanies the APK: full 100-cycle CSV, instrumentation result, unit XML, lint XML, build log, retained operational timings, prior failed run and colour-only recording classifications. No signing secret, PIN verifier, private screen text or personal launcher recording is delivered.
+Known limitations include measured brief launch exposure, unsupported external-display/DeX protection, experimental multiwindow behavior and owner/OS-controlled service interruption. The release is not claimed to be a Samsung system app or a zero-frame security boundary.

@@ -1,23 +1,48 @@
-# Verification protocol
+# Reproduce the verification
 
-Never infer display presentation from a state-machine assertion or draw callback. Use a synthetic target without private data and separately record the first target frame, event receipt, opaque overlay presentation, successful authentication and shield removal.
+Use synthetic fixtures, not private app content. Keep the phone unlocked during UI tests. Read VERIFICATION.md for the tested build and remaining limitations.
 
-## Automated tests
+## Build and JVM checks
 
-`./gradlew :app:testDebugUnitTest` exercises duplicate events, stale tokens, failed authentication, per-app multiwindow challenges, immediate relocking, screen lock, timeout boundaries, expired background timers, disconnect/reconnect, configuration changes, unknown windows, shared scope, process recreation and 100 deterministic cycles.
+From `plus/`, with JDK 17 and Android SDK 37 configured:
 
-For physical tests, build with `-PdeviceTests :app:assembleBenchmark :app:assembleBenchmarkAndroidTest :fixture:assembleDebug`. Install only the testbed and fixture APKs for automated setup. The benchmark application ID ends in `.testbed`; tests refuse to seed credentials/configuration in the final app. Its fixture PIN is **246813**, for synthetic testing only. The user must enable **Sam App Locker Test** in Accessibility Settings. Tests do not write secure settings or grant accessibility themselves.
+```sh
+./gradlew -PdeviceTests :app:assembleDebug :app:assembleBenchmark :app:assembleBenchmarkAndroidTest :fixture:assembleRedDebug :fixture:assembleBlueDebug :app:testBenchmarkUnitTest :app:lintDebug
+```
 
-Run instrumentation with `adb shell am instrument -w app.locker.plus.testbed.test/androidx.test.runner.AndroidJUnitRunner`. DeviceCyclesTest alternates 100 synthetic target launches via MAIN, explicit deep link and explicit share intents, waits for an observed Home event before each launch, validates the challenge and attached shield, executes real PIN verification, checks exactly one removal per launch and delayed duplicate prompts, and writes files/cycles.csv and files/diagnostics.csv in testbed private storage. This validates service/engine/PIN integration, not 100 manual keypad or biometric interactions, notification taps, or compositor frame secrecy. CredentialTest validates Keystore-backed verifier round-trip and persistent rate limiting. Test APKs are never release deliverables. On this Samsung build, instrumentation restarts required the owner to toggle the enabled accessibility service off/on within the test's 180-second reconnect window. Do not infer automatic process-death recovery from these tests.
+The normal APK is `app/build/outputs/apk/debug/app-debug.apk`. The isolated test application uses `app.locker.plus.testbed`; it cannot access the normal app's PIN or settings.
 
-## Physical matrix
+## UI regression run on an owner-configured phone
 
-Record device model, build fingerprint, API, One UI version, active refresh rate, thermal/power settings and whether USB charging was connected. For each available device use at least 100 launch/switch cycles. Count missed shields, repeated prompts, cancellation failures and visible flashes. Report warm/cold conditions and sample size, p50/p95/max. Treat the initial p95 event-to-opaque-frame <100 ms target as unproven until measured on actual output frames.
+1. Install the normal debug APK with `adb install -r`. Preserve the same signing identity to retain the owner's data. Let the owner create their PIN and enable **Sam App Locker** in Accessibility.
+2. Install both fixture APKs from `fixture/build/outputs/apk/{red,blue}/debug/`. The owner selects both **Locker test fixture** entries in the normal app's protected list. Enroll a strong fingerprint in Samsung Settings.
+3. Install `app-benchmark.apk` and `app-benchmark-androidTest.apk` from their respective build output directories. Leave **Sam App Locker Test** accessibility disabled for this run. Instrumentation targets that isolated package so it does not restart the normal service.
+4. Unlock the phone normally. Run:
 
-Additional manual paths: launcher taps, Recents, notification taps, browser links, shares through the chooser; protected A→B→unprotected switching; screen off/device credential unlock; keyboard and rotation; biometric success/cancel/lockout/PIN fallback; process death, reboot, update, service interruption and permission revocation. Test split screen and Samsung pop-up with both panes protected, then convert to full screen. Foldables and DeX require appropriate hardware; default-display support must not be extrapolated to external displays.
+```sh
+adb shell am instrument -w -r -e class app.locker.plus.PickerUiTest,app.locker.plus.BiometricUiProbeTest -e cycles 100 app.locker.plus.testbed.test/androidx.test.runner.AndroidJUnitRunner
+```
 
-Record the synthetic apps with screenrecord where possible, and use an external high-frame-rate camera for secure-window/biometric transitions. FLAG_SECURE may black out the overlay in screenrecord, so a black recording is not evidence of what the user physically saw. Inspect frame by frame. The app's `shield_draw_submitted` measures event receipt to backing-view draw submission, not SurfaceFlinger presentation. Pair `pin_accepted`/`biometric_accepted` timestamps with `shield_remove_submitted` for submission-level handoff latency. Do not equate PIN KDF execution time with removal latency.
+PickerUiTest enrolls a known synthetic PIN only in the testbed, authenticates through the keypad, filters the fixture list and toggles a fixture 20 times. Every tap must update the accessible switch state, observable UI state and preferences without leaving the screen. It ends with that fixture disabled in the testbed; the normal app's selections are untouched.
 
-Measure memory with dumpsys meminfo for the specific package, CPU with a time-window process sample, and idle power over a controlled unplugged interval with screen/state/network conditions held constant. USB-powered short runs are not a valid battery-drain benchmark. Do not reset the device's global battery statistics without owner consent.
+BiometricUiProbeTest alternates the protected fixture apps using the normal installation. Each cycle must find the fingerprint action, observe Samsung's active/focused biometric window, cancel it, find the lock shield again and confirm the authentication Activity has gone. It uses `FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES` on every UI automation access. A successful run does not prove fingerprint matching, physical frame ordering or security in untested modes. Fingerprint success still needs the owner's finger.
 
-The local operational ring stores only event categories, monotonic timestamps and durations. No screen contents, credentials, or package names are logged. Keep synthetic test artifacts separate from personal device data.
+Do not run all instrumentation tests indiscriminately on an owner-configured phone. The older DeviceCyclesTest intentionally targets the testbed service and requires its separate owner-controlled Accessibility setup. Restarting that instrumentation process can leave Samsung's testbed service enabled but disconnected. Its historical results are retained separately.
+
+## Timings and recordings
+
+Capture the normal app's `SamLocker` log continuously during the run to avoid buffer rollover. Logs contain event categories and monotonic durations, not package names, screen content or credentials. The supplied `summarize_ui_run.py` accepts the log path and normal process ID. `shield_event_frame_committed` starts at a direct protected window-event receipt; `shield_scan_frame_committed` starts at a later window-scan decision. Do not combine them into a claimed event-to-display metric.
+
+For frame analysis, record only the synthetic test workload. The supplied classifier exports colour fractions and timestamps from the central fixture area; raw launcher-containing recordings are not part of public evidence. Secure windows are blacked out by Android's recorder. Use an external high-speed camera for actual display-presentation and zero-frame claims.
+
+Restore temporary screen-awake settings after testing. Controlled idle battery testing requires a separate unplugged run. Do not infer battery drain from USB-powered automation.
+
+## Version 1 credential regression
+
+The isolated credential suite does not need the testbed Accessibility service or the owner's PIN:
+
+```sh
+adb shell am instrument -w -r -e class app.locker.plus.CredentialTest app.locker.plus.testbed.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+It creates only synthetic testbed credentials, tests old-format migration and tamper rejection, checks persistent rate limiting, and reports all 100 recreated-vault verification durations. The 500 ms p95 assertion is a generous device-regression ceiling, not a promise of instantaneous rendering. Retain the instrumentation output with the specific device/build conditions.

@@ -1,6 +1,6 @@
 # Sam App Locker: security design
 
-This is a reviewable development implementation, not OEM app-lock enforcement. The unrooted path targets Android 17/API 37, with minimum API 26. Earlier versions require additional device testing. The separate app ID is `app.locker.plus`. `plus/` is a standalone Gradle project inside the upstream repository; the original app modules remain available for comparison. The upstream MIT license and copyright are unchanged.
+This is a reviewable development implementation, not OEM app-lock enforcement. The unrooted path targets Android 17/API 37, with minimum API 26. Earlier versions require additional device testing. The debug app ID is `app.locker.plus`; the separately signed release uses `app.locker.plus.release`. `plus/` is a standalone Gradle project inside the upstream repository; the original app modules remain available for comparison. The upstream MIT license and copyright are unchanged.
 
 ## Upstream inspection, before changes
 
@@ -41,7 +41,11 @@ Background activity launch is requested only for the optional biometric flow fro
 
 ## Credentials
 
-6–12 digit app PIN, randomly salted PBKDF2-HMAC-SHA256 with 600,000 iterations, constant-time verifier comparison. The salt/verifier record is encrypted with AES-GCM using a non-exportable Android Keystore key. No plaintext PIN is stored. The KDF is serialized off the main thread. Failure counts are committed before verification. Five failures impose a 30-second delay, increasing to 15 minutes. A process restart with a penalized count starts a new full monotonic penalty, so restarting cannot skip it. This deliberately favors safety over preserving the precise remaining delay after reboot. Local app-data deletion remains an owner-controlled reset.
+Version 1.0 uses a 6–12 digit app PIN and randomly salted Argon2id v1.3: 19 MiB, two passes, one lane, 256-bit output. This meets the cited OWASP baseline and replaces the preview's approximately 2.3-second Java PBKDF2 verification with the native Argon2 reference implementation through pinned Argon2Kt 1.6.0 (including 16 KB page support). Comparisons are constant-time. This is a memory-hard KDF, not a fast unsalted digest or cached plaintext PIN. The salt/verifier and format marker are encrypted with AES-GCM using the existing non-exportable Android Keystore key. Parameters are fixed by the authenticated format, not accepted from untrusted input.
+
+Existing 48-byte preview records are verified using their original PBKDF2-HMAC-SHA256/600,000 settings. Only a successful check generates and atomically commits the new Argon2id record; the first old-PIN check remains slow once. Wrong PINs never migrate the record. Subsequent checks, including after vault/process recreation, use Argon2id. Missing keys, malformed records and failed authentication tags fail closed. Native input/output buffers are wiped in finally blocks. Managed UI entry has the memory limits described below.
+
+No plaintext PIN or successful-PIN cache is stored. Native library loading and KDF work are serialized off the main thread. Failure counts are still committed before verification; five failures impose a 30-second delay, increasing to 15 minutes. A process restart with a penalized count starts a new full monotonic penalty, so restarting cannot skip it. This deliberately favors safety over preserving the precise remaining delay after reboot. Local app-data deletion remains an owner-controlled reset.
 
 The settings dashboard requires the app PIN; stopping the Activity revokes that session. PIN changes require this prior authentication and confirmation. Lost/invalid Keystore data fails closed, with app-data reset as explicit owner recovery. Backup and device-transfer extraction of local preferences are excluded. Credential material is never logged. Temporary arrays are cleared where possible; UI entry necessarily exists briefly in managed memory.
 
@@ -58,6 +62,9 @@ Window events arrive after Android has begun a launch. No public API permits thi
 All reported default-display application windows are evaluated, not just one foreground package. However Android/OEMs can omit or restrict window metadata. Split screen and pop-up mode remain experimental until the specific device matrix passes. External displays/DeX and cross-profile apps are unsupported; a default-display overlay cannot cover them. Recovery Settings may show alongside protected content in multiwindow. Do not treat these modes as secured.
 
 ## Sources checked 2026-10-16
+
+* [OWASP password storage parameters](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html)
+* [Argon2Kt native binding](https://github.com/lambdapioneer/argon2kt) and [1.6.0 release](https://github.com/lambdapioneer/argon2kt/releases/tag/v1.6.0)
 
 * [AccessibilityService API](https://developer.android.com/reference/android/accessibilityservice/AccessibilityService)
 * [Accessibility overlay window type](https://developer.android.com/reference/android/view/WindowManager.LayoutParams#TYPE_ACCESSIBILITY_OVERLAY)

@@ -6,8 +6,8 @@ android {
         applicationId = "app.locker.plus"
         minSdk = 26
         targetSdk = 37
-        versionCode = 1
-        versionName = "1.0.0-preview"
+        versionCode = 2
+        versionName = "1.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         manifestPlaceholders["appLabel"] = "Sam App Locker"
     }
@@ -16,7 +16,12 @@ android {
     kotlin.compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) }
     testBuildType = if (project.hasProperty("deviceTests")) "benchmark" else "debug"
     buildTypes {
-        release { isMinifyEnabled = false }
+        release {
+            // Keep the existing preview/debug installation and its private data intact.
+            applicationIdSuffix = ".release"
+            isMinifyEnabled = false
+            isDebuggable = false
+        }
         create("benchmark") {
             initWith(getByName("debug"))
             applicationIdSuffix = ".testbed"
@@ -26,6 +31,7 @@ android {
     }
 }
 dependencies {
+    implementation("com.lambdapioneer.argon2kt:argon2kt:1.6.0")
     implementation("androidx.core:core-ktx:1.17.0")
     implementation("androidx.activity:activity-compose:1.11.0")
     implementation("androidx.fragment:fragment-ktx:1.8.9")

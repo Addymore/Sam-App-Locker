@@ -10,4 +10,8 @@
 .cxx
 local.properties
 *.jks
+*.keystore
+*.p12
+*.dpapi
+signing.properties
 *.dm

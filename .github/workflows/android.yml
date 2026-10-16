@@ -1,4 +1,4 @@
-name: Android CI
+name: Sam App Locker CI
 
 on:
   push:
@@ -8,6 +8,11 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: plus
 
     steps:
       - name: Checkout repository
@@ -29,16 +34,16 @@ jobs:
         uses: gradle/actions/setup-gradle@v4.4.1
 
       - name: Build with gradle
-        run: ./gradlew clean assemble
+        run: ./gradlew :app:assembleDebug :app:assembleRelease :app:testDebugUnitTest :app:lintDebug :app:lintRelease
 
       - name: Upload debug apks
         uses: actions/upload-artifact@v4.6.2
         with:
           name: app-debug
-          path: app/build/outputs/apk/debug
+          path: plus/app/build/outputs/apk/debug
 
       - name: Upload release apks
         uses: actions/upload-artifact@v4.6.2
         with:
-          name: app-release
-          path: app/build/outputs/apk/release
+          name: app-release-unsigned
+          path: plus/app/build/outputs/apk/release

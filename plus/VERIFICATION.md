@@ -2,7 +2,44 @@
 
 ## Release status
 
-Installable **debug preview**, not a production-certified security boundary. API 37 / Android 17 build. Original MIT attribution retained. No legitimate production signing credentials were available, so no release APK or signing key is supplied.
+Version **1.0.0** (versionCode 2), API 37 / Android 17. Debug and a dedicated-key signed release APK are supplied. Release signing does not certify native/OEM enforcement or untested device modes. Original MIT attribution is retained. The release identity is separate from the existing debug installation so its private data is not erased. No private signing key is included in the public artifacts.
+
+## Version 1 PIN fix: physical results
+
+Final version-1 builds passed: debug, release, benchmark and instrumentation APKs; 17/17 JVM tests; debug and release lint each had zero errors and 20 warnings. The signed release passed APK v2/v3 signature verification and zipalign's 16 KB page check. All bundled native ELF LOAD segments were also inspected and had 16,384-byte alignment. Its manifest was checked for version 1.0.0/code 2, the separate release package ID and absence of the debuggable flag.
+
+The final debug APK was installed successfully in place on the A57. The USB device disconnected before a separate signed-release installation/startup smoke test and before post-update live service status could be checked. Therefore those release-device checks remain unverified. The temporary USB screen-awake setting had already been restored to 0. The disabled isolated testbed packages and generated phone-side test video could not be cleaned up after disconnection; the testbed uses synthetic credentials, and the phone-side recording includes launcher transitions and was excluded from public artifacts. These temporary test files can be removed later. No normal-app data was cleared.
+
+The preview used Android's PBKDF2-HMAC-SHA256/600,000 implementation on every PIN entry. The work was off the UI thread but still delayed the authentication result by roughly 2.3 seconds. Version 1 uses native Argon2id v1.3 (19 MiB, two iterations, one lane) with random salt and the existing Keystore AES-GCM wrapper. This meets the cited OWASP baseline; it does not replace a password KDF with a fast hash or keep the PIN cached.
+
+On the same A57, the isolated CredentialTest completed **3/3 tests in 13.213 seconds**. It verified legacy migration, no migration for a wrong PIN, encrypted-record tamper rejection, PIN replacement, input-array clearing, wrong-PIN rejection and persistence of the failed-attempt penalty. Across 100 valid checks, each with a newly constructed PinVault:
+
+| Measurement | Result |
+| --- | ---: |
+| One-time successful legacy verification plus migration | 2,362 ms |
+| New PIN verification median | 55 ms |
+| New PIN verification p95 | 59 ms |
+| New PIN verification maximum | 61 ms |
+
+Durations include Keystore decryption, native KDF, constant-time comparison and the persistent attempt-counter commits. They exclude UI entry, executor queueing and rendered screen transitions. Vault-object recreation is tested; it is not a claim of 100 full process restarts. The native library was already loaded in this process. The first legacy PIN entry remains slow once; subsequent entries use the new record. Evidence: device-pin-v1.txt, with all 100 samples. The owner's actual PIN was neither read nor used by automation.
+
+## Picker and biometric UI regression results
+
+Runtime commit `7c4630c`, before the isolated version-1 credential change: **2/2 physical UI tests passed in 335.038 seconds**. The picker test made 20 actual row taps and checked accessible switch state, observable UI state and stored selections after every tap. The biometric test performed 100 alternating synthetic red/blue app launches, tapped the fingerprint action, observed Samsung's active/focused prompt, cancelled it and verified that the shield returned and the authentication Activity stopped. There were 100 button callbacks, 100 prompt launches, 100 cancellations and 100 completed replacement-frame callbacks. No extra prompt was observed by these assertions. This is not a test of actual fingerprint matching on every cycle.
+
+The owner separately confirmed that their enrolled fingerprint unlocked the blue fixture and that app switches updated promptly. A content-free `biometric_accepted` event corroborated the successful fingerprint result. No fingerprint template or private PIN was captured. Version 1 does not change the engine, picker or biometric handoff code from this tested implementation; their 100-cycle results are historical regression evidence, not a newly repeated 100-cycle UI run of the release package.
+
+| UI-run timing | Samples | Median | p95 | Maximum |
+| --- | ---: | ---: | ---: | ---: |
+| Direct protected window event to shield hardware frame commit | 95 | 33 ms | 49 ms | 53 ms |
+| Scan decision to hardware frame commit, mixed origins | 107 | 41 ms | 51 ms | 98 ms |
+| Cancellation result to replacement-overlay frame commit | 100 | 63 ms | 84 ms | 98 ms |
+
+Frame commit means submission to the swap chain, not physical presentation. Five launch shields originated from window scans, so the 95 event-origin samples are not all 100 launches. The scan set also contains cancellation returns and setup samples; it cannot be presented as event latency. The original p95 below 100 ms physical-frame target remains unverified.
+
+A 179.98-second recording of part of this UI run was decoded into **13,037 frames**. In 47 identifiable transition-to-target-colour-to-blackout launch sequences, content-to-blackout durations were median 39.74 ms, p95 95.40 ms and maximum 111.30 ms. No target-colour-between-blackout pattern was detected in this sample. These findings still confirm launch content exposure. Variable capture cadence, thresholded colour classification and screenrecord's secure-window blackout prevent a zero-exposure or no-flash claim. Only colour/timing classifications are published, not raw launcher-containing video.
+
+After that run, six 10-second CPU interval samples at Home ranged from 0.0% to 0.8% of one core (the initial cumulative sample is excluded). Memory was 121,629 KiB PSS and 243,052 KiB RSS. These are a brief USB-powered idle observation, not an unplugged battery or sustained-memory benchmark. Temporary USB screen-awake was restored to its original value 0.
 
 ## Physical hardware and conditions
 
@@ -13,7 +50,7 @@ Installable **debug preview**, not a production-certified security boundary. API
 - Two synthetic fixture apps; alternating warm MAIN, explicit VIEW deep-link and explicit SEND launches. These do not stand in for tapping real notifications, selecting a share chooser, or tapping launcher/Recents UI.
 - No emulator results are included. No second Samsung, foldable or DeX device was available.
 
-## Build and automated verification
+## Earlier build and service verification (preview baseline)
 
 - JDK 17; Gradle 9.5.1; Android Gradle Plugin 9.2.1; compile/target SDK 37.
 - Debug, isolated benchmark and instrumentation APKs built successfully.
@@ -23,7 +60,7 @@ Installable **debug preview**, not a production-certified security boundary. API
 - The final physical DeviceCyclesTest passed **100/100 cycles**, 367.178 seconds including owner reconnect wait. No missed challenge, missed attached shield, stale PIN result, delayed duplicate lock or additional removal was detected inside that test's assertion windows. These are service-integration assertions, not a claim of zero visible flashes. Code commit: `9f9754c`.
 - Normal debug APK installed successfully as `app.locker.plus`, label **Sam App Locker**. Subsequent fixes were installed in place, retaining its signing identity and owner data. The isolated testbed was reinstalled for UI regression tests.
 
-## Completed-run timings
+## Earlier service/PIN-run timings (commit 9f9754c, before the PIN fix)
 
 | Measurement | Samples | Median | p95 | Maximum |
 | --- | ---: | ---: | ---: | ---: |
@@ -34,7 +71,7 @@ Installable **debug preview**, not a production-certified security boundary. API
 
 Timing percentiles use nearest rank. The full cycle CSV contains all 100 iterations. The retained logcat sample contains only 87 accepted PIN events and 175 shield draws because earlier log entries rolled out; these diagnostic percentiles must not be described as 100-launch presentation measurements. Shield origins include direct window-event handling and queued window scans. The recorded duration starts at the decision's supplied timestamp, so the mixed metric does not include all queueing time for scan-origin shields. PIN KDF work accounts for most of the roughly 2.3-second authentication wait; it runs off the main thread.
 
-During the cycle workload, one `dumpsys meminfo` sample reported 122,140 KiB PSS (119.3 MiB), 239,520 KiB RSS (233.9 MiB), 64 KiB swap PSS. The normal app after setup reported 182,162 KiB PSS (177.9 MiB) and 313,144 KiB RSS (305.8 MiB). These are snapshots, not peak or steady idle memory. Four short CPU samples during owner interaction ranged from 0 to 88.8% of one core; they are not an idle benchmark. Controlled idle CPU and unplugged battery drain have not been measured.
+During the cycle workload, one `dumpsys meminfo` sample reported 122,140 KiB PSS (119.3 MiB), 239,520 KiB RSS (233.9 MiB), 64 KiB swap PSS. The normal app after setup reported 182,162 KiB PSS (177.9 MiB) and 313,144 KiB RSS (305.8 MiB). These are snapshots, not peak or steady idle memory. Four short CPU samples during owner interaction ranged from 0 to 88.8% of one core; they are not an idle benchmark. At this earlier stage no controlled idle sample existed; the later brief Home sample is reported above. Unplugged battery drain remains unmeasured.
 
 The owner completed normal-app PIN setup and accessibility enablement. A live `service_connected` event independently confirmed connection in the normal installation. The owner's private PIN was not requested or captured.
 
@@ -70,7 +107,7 @@ The event-to-first-opaque-frame p95 target below 100 ms remains unverified at th
 
 ## Required follow-up before production use
 
-- Manually verify fingerprint success, cancel, lockout and PIN fallback; verify whether any enrolled face modality meets BIOMETRIC_STRONG. Automated PIN service calls do not test keypad usability or fingerprint window ordering.
+- Verify biometric lockout, enrolled face configurations and protected-overlay PIN fallback across device modes. Fingerprint success and cancellation have now been tested as described above; this does not validate every authenticator or lockout path.
 - Launcher taps, Recents, notification taps, browser deep links and share chooser; rapid direct protected-to-protected switching.
 - Screen off/device unlock, rotation, keyboard, permission revocation, reboot, app update, power saving and Doze. Engine unit coverage does not prove these physical lifecycle paths.
 - Split screen and Samsung pop-up with every protected pane visible; foldable and DeX transitions on appropriate hardware. Multiwindow remains experimental; external-display/DeX protection is unsupported.
