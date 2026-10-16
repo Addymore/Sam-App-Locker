@@ -62,7 +62,7 @@ import androidx.compose.ui.unit.dp
                 }
                 Button(onClick = { busy = true; val value = pin.toCharArray(); pin = ""; onPin(value) { busy = false } },
                     enabled = enabled && !busy && pin.length >= 6, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text("Continue") }
-                onBiometric?.let { TextButton(onClick = it, enabled = enabled && !busy, modifier = Modifier.heightIn(min = 48.dp)) { Text("Use fingerprint / strong biometric") } }
+                onBiometric?.let { action -> TextButton(onClick = { Diagnostics.record("biometric_button_tapped"); action() }, enabled = enabled && !busy, modifier = Modifier.heightIn(min = 48.dp)) { Text("Use fingerprint / strong biometric") } }
                 onHome?.let { TextButton(onClick = it, modifier = Modifier.heightIn(min = 48.dp)) { Text("Return home") } }
             }
         }

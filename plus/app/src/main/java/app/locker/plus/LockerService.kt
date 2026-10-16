@@ -143,7 +143,9 @@ class LockerService : AccessibilityService() {
         }
     }
     fun biometric(token: LockEngine.Challenge) {
-        if (token != engine.challenge || authenticating != null) return
+        if (token != engine.challenge) { Diagnostics.record("biometric_stale_action"); shield.message.value = "The app changed. Try fingerprint again."; return }
+        if (authenticating != null) { Diagnostics.record("biometric_already_requested"); shield.message.value = "Biometric request pending. You can still use PIN."; return }
+        Diagnostics.record("biometric_action_received")
         authenticating = token
         try {
             startActivity(Intent(this, BiometricActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION).putExtra("generation", token.generation).putExtra("package", token.packageName))

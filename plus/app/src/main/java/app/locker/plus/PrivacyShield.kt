@@ -47,7 +47,9 @@ class PrivacyShield(private val service: LockerService) : LifecycleOwner, ViewMo
         frame.setViewTreeLifecycleOwner(this); frame.setViewTreeSavedStateRegistryOwner(this); frame.setViewTreeViewModelStoreOwner(this)
         frame.setBackgroundColor(if (service.resources.configuration.uiMode and 0x30 == 0x20) 0xff17151d.toInt() else 0xfff6f3fa.toInt())
         compose = ComposeView(service).apply {
-            setViewCompositionStrategy(androidx.compose.ui.platform.ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
+            // A WindowManager removal destroys the window's recomposer/input scope.
+            // Never retain that composition across distinct overlay windows.
+            setViewCompositionStrategy(androidx.compose.ui.platform.ViewCompositionStrategy.DisposeOnDetachedFromWindowOrReleasedFromPool)
             setContent { LockerTheme(service.app.config.dynamic()) {
                 val current = token.value
                 AuthPanel(title = if (uncertain.value) "Window cannot be verified" else "App is locked", subtitle = if (current == null) "Return home and open the app in full screen." else appLabel.value.ifEmpty { current.packageName },
@@ -79,6 +81,9 @@ class PrivacyShield(private val service: LockerService) : LifecycleOwner, ViewMo
         val start = SystemClock.elapsedRealtime()
         registry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE); registry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
         wm.removeViewImmediate(frame); attached = false
+        // Next attachment must submit the native opaque backing before rebuilding UI.
+        frame.removeView(compose)
+        compose.disposeComposition()
         Diagnostics.record("shield_remove_submitted", SystemClock.elapsedRealtime() - start)
     }
     fun destroy() { hide(); registry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY); viewModelStore.clear() }
