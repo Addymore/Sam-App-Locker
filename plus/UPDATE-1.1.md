@@ -1,4 +1,10 @@
-# Sam App Locker 1.1.0-rc2
+# Sam App Locker 1.1
+
+Version 1.1.0, versionCode 6. Android 15 / API 35 is now the minimum; compile/target SDK remains 37 (Android 17). Release `app.sam.locker` keeps its existing dedicated signing certificate and private data on upgrade. Debug is `app.sam.locker.debug`. Updating resets in-memory unlock sessions, so authentication is required again.
+
+The One UI 9 work distinguishes System UI panel-only snapshots from unknown app windows, tracks verified window ownership across temporarily unavailable roots, and verifies Settings/recovery window events before treating them as an app exit. Reconnecting over an already-visible protected app can establish its missing foreground hint only from a single verified protected target. No new permissions or production polling are introduced. See [current verification](RELEASE-1.1-VERIFICATION.md) and [remaining work](NEXT-UPDATE.md) before relying on a particular mode.
+
+## Previous rc2 changes (historical)
 
 This is an in-place update from rc1: `app.sam.locker`, versionCode 4, same dedicated signing identity. Existing PIN and selections are retained. Debug remains `app.sam.locker.debug`.
 
