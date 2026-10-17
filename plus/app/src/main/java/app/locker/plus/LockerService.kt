@@ -26,6 +26,8 @@ class LockerService : AccessibilityService() {
     private var biometricCover: LockEngine.Challenge? = null
     private var confirmedProtectedWindow: String? = null
     private var snapshotProtected = emptySet<String>()
+    private var systemPanelActive = false
+    private val windowOwners = WindowOwnerCache()
     private var autoRequestQueued = false
     private val automaticBiometric = BiometricAttemptGate()
     val biometricAvailable get() = android.os.Build.VERSION.SDK_INT >= 29 &&
@@ -58,11 +60,12 @@ class LockerService : AccessibilityService() {
     }
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == Intent.ACTION_SCREEN_OFF) { evidence.clear(); confirmedProtectedWindow = null; pendingForeground = null; authenticating = null; engine.screenLocked(); render(); Diagnostics.record("screen_locked") }
+            if (intent?.action == Intent.ACTION_SCREEN_OFF) { evidence.clear(); windowOwners.clear(); confirmedProtectedWindow = null; pendingForeground = null; authenticating = null; engine.screenLocked(); render(); Diagnostics.record("screen_locked") }
             else scan(null)
         }
     }
     override fun onServiceConnected() {
+        windowOwners.clear()
         instance = this
         shield = PrivacyShield(this)
         keyboards = getSystemService(InputMethodManager::class.java).enabledInputMethodList.map { it.packageName }.toSet()
@@ -84,13 +87,15 @@ class LockerService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (!ready || event == null) return
         if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && event.eventType != AccessibilityEvent.TYPE_WINDOWS_CHANGED) return
-        if (deviceUnavailable()) { evidence.clear(); confirmedProtectedWindow = null; pendingForeground = null; authenticating = null; engine.screenLocked(); render(); return }
+        if (deviceUnavailable()) { evidence.clear(); windowOwners.clear(); confirmedProtectedWindow = null; pendingForeground = null; authenticating = null; engine.screenLocked(); render(); return }
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED &&
+            event.windowChanges and AccessibilityEvent.WINDOWS_CHANGE_REMOVED != 0) windowOwners.removed(event.windowId)
         val received = SystemClock.elapsedRealtime()
         val pkg = event.packageName?.toString()
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && pkg != null) {
-            if (pkg in recovery) {
-                evidence.clear(); confirmedProtectedWindow = null; pendingForeground = null; authenticating = null; engine.screenLocked(); render(); return
-            }
+            // Samsung panel events can name Settings without opening its Activity.
+            // Verify the application window through the same exit path as Home.
+            if (pkg in recovery) Diagnostics.record("recovery_window_hint")
             if (pkg !in transientPackages && pkg !in keyboards && pkg != packageName) {
                 if (pkg in engine.protectedApps) {
                     pendingForeground = null
@@ -130,7 +135,7 @@ class LockerService : AccessibilityService() {
     }
     private fun scan(event: AccessibilityEvent?) {
         val received = SystemClock.elapsedRealtime()
-        if (deviceUnavailable()) { evidence.clear(); confirmedProtectedWindow = null; pendingForeground = null; engine.screenLocked(); authenticating = null; render(); return }
+        if (deviceUnavailable()) { evidence.clear(); windowOwners.clear(); confirmedProtectedWindow = null; pendingForeground = null; engine.screenLocked(); authenticating = null; render(); return }
         val eventPackage = event?.packageName?.toString()
         // Recovery/settings and launcher remain under owner control; never trap a user.
         if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && eventPackage in recovery) {
@@ -141,25 +146,65 @@ class LockerService : AccessibilityService() {
             var incomplete = false
             var appWindowCount = 0
             var ownActive = false
-            val applicationWindows = mutableListOf<ForegroundTransition.Window>()
+            var verifiedSystemPanel = false
+            var systemUiPresent = false
+            val rawApplications = mutableListOf<ForegroundTransition.Window>()
+            val activeApplicationIds = mutableSetOf<Int>()
             for (window in windows) {
                 if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) {
+                    // Only root ownership. Remember live system-window identity even
+                    // before focus, so a temporarily missing root cannot invent a new owner.
+                    if (window.type == AccessibilityWindowInfo.TYPE_SYSTEM) {
+                        val systemRoot = window.getRoot(0)
+                        val owner = windowOwners.owner(window.id, window.type, systemRoot?.packageName?.toString(), true)
+                        if (owner == "com.android.systemui") {
+                            systemUiPresent = true
+                            if (window.isActive || window.isFocused) verifiedSystemPanel = true
+                        }
+                        @Suppress("DEPRECATION")
+                        systemRoot?.recycle()
+                    }
                     if (pendingForeground?.first == window.id) pendingForeground = null
                     continue
                 }
+                // Request no descendant prefetch. Android 17 can also confirm that
+                // a null-root snapshot became obsolete during the panel animation.
+                var root = window.getRoot(0)
+                if (root == null && android.os.Build.VERSION.SDK_INT >= 37) {
+                    if (!window.refresh()) {
+                        windowOwners.removed(window.id)
+                        Diagnostics.record("obsolete_application_window")
+                        continue
+                    }
+                    root = window.getRoot(0)
+                }
                 appWindowCount++
-                // Only package identity. Do not traverse nodes or read text/contentDescription.
-                val root = window.root
+                // Only package identity. A still-live unknown window fails closed.
                 val pkg = root?.packageName?.toString()
                 @Suppress("DEPRECATION")
                 root?.recycle()
-                // Exclude our opaque host, but not unknown/transient application
-                // roots: they must prevent a single-package fallback from guessing.
+                rawApplications.add(ForegroundTransition.Window(window.id, pkg))
+                if (window.isActive) activeApplicationIds.add(window.id)
+            }
+            val applicationWindows = mutableListOf<ForegroundTransition.Window>()
+            for (window in rawApplications) {
+                val pkg = windowOwners.owner(window.id, AccessibilityWindowInfo.TYPE_APPLICATION, window.pkg, true)
+                if (window.pkg == null && pkg != null) Diagnostics.record("panel_cached_window_owner")
                 if (pkg != packageName) applicationWindows.add(ForegroundTransition.Window(window.id, pkg))
-                if (pkg == packageName && window.isActive) ownActive = true
+                if (pkg == packageName && window.id in activeApplicationIds) ownActive = true
                 if (pkg == null) incomplete = true
                 else if (pkg != packageName && pkg !in keyboards && pkg !in recovery && pkg !in homes && pkg !in transientPackages) packages.add(pkg)
             }
+            systemPanelActive = verifiedSystemPanel
+            val panelObscuresApps = SystemPanelPolicy.preservesSnapshot(
+                systemUiPresent, appWindowCount, engine.uncertain)
+            if (verifiedSystemPanel || (appWindowCount == 0 && evidence.foreground in engine.protectedApps))
+                Diagnostics.record("panel_snapshot_${if (verifiedSystemPanel) 1 else 0}_${appWindowCount}_${if (pendingForeground != null) 1 else 0}_${if (engine.uncertain) 1 else 0}")
+            // System-only snapshots during panel opening/closing need not own focus.
+            // There is still no unidentified application window to exempt.
+            // Preserve sessions across a shade-only snapshot. This does not authenticate,
+            // clear an existing challenge, or exempt unknown application roots.
+            if (panelObscuresApps) packages.addAll(engine.visible)
             snapshotProtected = applicationWindows.mapNotNull { it.pkg }.filter { it in engine.protectedApps }.toSet()
             if (pendingForeground != null) Diagnostics.record("exit_snapshot_${applicationWindows.size}_${applicationWindows.count { it.pkg == null }}_${applicationWindows.count { it.pkg == pendingForeground?.second }}_${applicationWindows.count { it.pkg in engine.protectedApps }}")
             ForegroundTransition.verified(pendingForeground, applicationWindows)?.let { pkg ->
@@ -186,7 +231,7 @@ class LockerService : AccessibilityService() {
             // During biometric handoff Android may omit obscured app windows. Retain the
             // challenge only while our auth Activity owns focus, never on unrelated switches.
             if (ownActive && authenticating != null) packages.addAll(engine.visible)
-            if (appWindowCount == 0 && evidence.foreground !in homes && evidence.foreground != packageName) incomplete = true
+            if (appWindowCount == 0 && !panelObscuresApps && evidence.foreground !in homes && evidence.foreground != packageName) incomplete = true
             // A token-bound full-screen auth host covers the default display. During
             // its handoff, obscured application roots may legitimately be unavailable.
             val hosting = biometricHost == authenticating && authenticating != null && evidence.foreground == authenticating?.packageName
@@ -240,7 +285,7 @@ class LockerService : AccessibilityService() {
     fun biometric(token: LockEngine.Challenge) {
         if (android.os.Build.VERSION.SDK_INT < 29) { shield.message.value = "Use PIN on this Android version."; return }
         if (token != engine.challenge) { Diagnostics.record("biometric_stale_action"); shield.message.value = "The app changed. Try fingerprint again."; return }
-        if (engine.uncertain || deviceUnavailable()) return
+        if (engine.uncertain || deviceUnavailable() || systemPanelActive) return
         if (authenticating != null) { Diagnostics.record("biometric_already_requested"); return }
         Diagnostics.record("biometric_action_received")
         automaticBiometric.take(token)
@@ -253,7 +298,7 @@ class LockerService : AccessibilityService() {
         } catch (_: Exception) { authenticating = null; Diagnostics.record("biometric_launch_denied"); shield.message.value = "Biometric screen unavailable. Use PIN." }
     }
     fun shieldReady(token: LockEngine.Challenge) {
-        if (token != engine.challenge || engine.uncertain || deviceUnavailable() || authenticating != null) return
+        if (token != engine.challenge || engine.uncertain || deviceUnavailable() || systemPanelActive || authenticating != null) return
         if ((pendingForeground == null || transitionFrames == 0) && token.packageName in snapshotProtected && biometricAvailable && automaticBiometric.take(token)) {
             Diagnostics.record("biometric_automatic_requested")
             biometric(token)
@@ -262,7 +307,8 @@ class LockerService : AccessibilityService() {
     fun biometricHostStarted(token: LockEngine.Challenge): Boolean {
         // Revalidate before this Activity owns a window.
         scan(null)
-        if (!isCurrent(token) || token.packageName !in snapshotProtected) { Diagnostics.record("biometric_host_target_gone"); return false }
+        if (!isCurrent(token) || systemPanelActive || token.packageName !in snapshotProtected) { Diagnostics.record("biometric_host_target_gone"); return false }
+        evidence.adoptAuthenticationTarget(token.packageName, snapshotProtected)
         biometricHost = token
         return true
     }
@@ -302,6 +348,7 @@ class LockerService : AccessibilityService() {
     fun home() { authenticating = null; engine.invalidateChallenge(); performGlobalAction(GLOBAL_ACTION_HOME) /* shield stays until a subsequent window event */ }
     override fun onInterrupt() {
         if (!ready) return
+        windowOwners.clear()
         authenticating = null; engine.configure(engine.protectedApps, engine.rule, engine.timeoutMs, engine.shared)
         Health.interrupted.value = true; Health.detail.value = "Service interrupted; reopen setup"
         Diagnostics.record("service_interrupted"); render()
@@ -310,7 +357,7 @@ class LockerService : AccessibilityService() {
     override fun onDestroy() { shutdown(); super.onDestroy() }
     private fun shutdown() {
         if (!ready) return
-        ready = false; authenticating = null; engine.disconnect(); handler.removeCallbacksAndMessages(null)
+        ready = false; authenticating = null; windowOwners.clear(); engine.disconnect(); handler.removeCallbacksAndMessages(null)
         android.view.Choreographer.getInstance().removeFrameCallback(transitionFrame)
         transitionFrameQueued = false
         shield.destroy(); runCatching { unregisterReceiver(receiver) }

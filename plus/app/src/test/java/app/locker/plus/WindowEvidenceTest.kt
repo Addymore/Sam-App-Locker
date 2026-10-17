@@ -19,4 +19,17 @@ class WindowEvidenceTest {
         assertEquals(setOf("a", "b"), e.visible(setOf("b"), setOf("a", "b")))
         e.clear(); assertEquals(setOf("b"), e.visible(setOf("b"), setOf("a", "b")))
     }
+    @Test fun reconnectCanRecoverOneVerifiedAuthenticationTarget() {
+        val e = WindowEvidence()
+        e.adoptAuthenticationTarget("private", setOf("private"))
+        assertEquals("private", e.foreground)
+    }
+    @Test fun reconnectCannotReplaceNewerForegroundOrGuessMissingWindow() {
+        val e = WindowEvidence()
+        e.adoptAuthenticationTarget("private", emptySet()); assertNull(e.foreground)
+        e.adoptAuthenticationTarget("private", setOf("other")); assertNull(e.foreground)
+        e.adoptAuthenticationTarget("private", setOf("private", "other")); assertNull(e.foreground)
+        e.foregroundEvent("home")
+        e.adoptAuthenticationTarget("private", setOf("private")); assertEquals("home", e.foreground)
+    }
 }

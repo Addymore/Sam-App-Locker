@@ -4,10 +4,10 @@ android {
     compileSdk = 37
     defaultConfig {
         applicationId = "app.sam.locker"
-        minSdk = 26
+        minSdk = 35
         targetSdk = 37
-        versionCode = 4
-        versionName = "1.1.0-rc2"
+        versionCode = 6
+        versionName = "1.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         manifestPlaceholders["appLabel"] = "Sam App Locker"
     }

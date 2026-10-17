@@ -325,9 +325,13 @@ class MainActivity : FragmentActivity() {
                         Text("Notifications, widgets, Recents thumbnails and external displays are separate exposure surfaces. This app does not secure them.")
                         Text("Based on AppLock • © 2023–2025 Pranav Purwar • MIT License", style = MaterialTheme.typography.labelSmall)
                     } }
-                        item { LockerCard("App removal") {
-                            Text("The Locked tab can request fingerprint or PIN before opening Android’s uninstall confirmation.")
-                            Text("Removing apps through Settings, the launcher or other tools is not intercepted. System-wide uninstall blocking requires a separately managed device; this app does not have that privilege.")
+                        item { LockerCard("Uninstall protection") {
+                            Text("In-app confirmation · Always on", style = MaterialTheme.typography.titleSmall)
+                            Text("Uninstall from the Locked tab requires fresh fingerprint or PIN authentication before Android’s confirmation.")
+                            Text("System-wide blocking · Unavailable", style = MaterialTheme.typography.titleSmall)
+                            Text("Samsung Settings, the launcher and other tools can still remove locked apps without this app’s PIN.")
+                            Text("Sam App Locker removal · Not blocked", style = MaterialTheme.typography.titleSmall)
+                            Text("This installation cannot prevent its own removal, force-stop or accessibility disablement. Uninstall blocking requires separate managed-device provisioning; there is no ordinary permission switch that enables it.")
                         } }
                     }
                 }
