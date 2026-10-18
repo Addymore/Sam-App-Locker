@@ -135,6 +135,9 @@ class MainActivity : FragmentActivity() {
             .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG).setNegativeButtonText("Use ${app.vault.kind().label}").build())
     }
     private fun authenticate(pin: CharArray, done: () -> Unit) {
+        if (!loaded || !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
+            pin.fill('\u0000'); done(); return
+        }
         val epoch = lifecycleEpoch
         if (!enrolled) {
             if (!confirmation) { confirm?.fill('\u0000'); confirm = pin; confirmation = true; error = ""; done(); return }
@@ -175,8 +178,15 @@ class MainActivity : FragmentActivity() {
             .onFailure { error = "Android could not open uninstall. Use the phone’s app settings." }
     }
     override fun onResume() { super.onResume(); accessibilityGranted = accessibilityEnabled(); resumeEpoch++; refreshApps() }
-    override fun onStop() {
-        super.onStop(); lifecycleEpoch++; biometricPending = false
+    override fun onPause() {
+        super.onPause()
+        // A quick Home/return can resume before onStop. Never carry an
+        // authenticated credential-change form across that pause boundary.
+        if (!enrolled && loaded) invalidateManagement()
+    }
+    override fun onStop() { super.onStop(); invalidateManagement() }
+    private fun invalidateManagement() {
+        lifecycleEpoch++; biometricPending = false
         if (::biometricPrompt.isInitialized) biometricPrompt.cancelAuthentication()
         authorized = false; pendingRemoval = null; preferPin = false
         confirm?.fill('\u0000'); confirm = null; confirmation = false; error = ""

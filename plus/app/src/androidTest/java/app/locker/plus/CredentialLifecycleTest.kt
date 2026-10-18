@@ -43,7 +43,7 @@ class CredentialLifecycleTest {
             context.startActivity(Intent(context, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
             assertTrue(d.wait(Until.hasObject(By.pkg(context.packageName)), 5_000))
-            assertFalse("Stale enrollment remained interactive", d.hasObject(By.text("Choose your app lock")))
+            assertTrue("Stale enrollment remained interactive", d.wait(Until.gone(By.text("Choose your app lock")), 5_000))
             assertFalse("Credential keypad remained usable before reauthentication", d.hasObject(By.desc("Clear")))
         } finally {
             release.countDown()
