@@ -22,6 +22,7 @@ class LockerService : AccessibilityService() {
     val shieldAttached get() = ready && shield.isAttached
     var shieldRemovals = 0; private set
     private var authenticating: LockEngine.Challenge? = null
+    private var biometricDismiss: (() -> Unit)? = null
     private var biometricHost: LockEngine.Challenge? = null
     private var biometricCover: LockEngine.Challenge? = null
     private var confirmedProtectedWindow: String? = null
@@ -56,7 +57,7 @@ class LockerService : AccessibilityService() {
     private val recovery = setOf("com.android.settings", "com.android.phone", "com.samsung.android.dialer", "com.google.android.dialer", "com.samsung.android.incallui", "com.android.emergency")
     private val timer = Runnable { engine.tick(); render() }
     private val preferences = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        if (key == null || key in setOf("locked_apps", "rule", "seconds", "shared")) configure()
+        if (key == null || key in setOf("locked_apps", "rule", "seconds", "shared", "credential_epoch")) configure()
     }
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -108,6 +109,13 @@ class LockerService : AccessibilityService() {
                     // a protected foreground hint. Validate in the coalesced scan.
                     Diagnostics.record("exit_hint_received")
                     pendingForeground = event.windowId to pkg
+                    // A previously verified live application window can prove an exit
+                    // even while our authentication Activity obscures its current root.
+                    if (windowOwners.owner(event.windowId, AccessibilityWindowInfo.TYPE_APPLICATION, null, true) == pkg) {
+                        evidence.foregroundEvent(pkg)
+                        authenticating = null
+                        Diagnostics.record("verified_cached_exit")
+                    }
                     transitionFrames = 3
                 }
             }
@@ -259,6 +267,11 @@ class LockerService : AccessibilityService() {
     private fun render(received: Long = SystemClock.elapsedRealtime(), eventOrigin: Boolean = false) {
         if (!ready) return
         automaticBiometric.retainVisible(engine.visible)
+        if (biometricDismiss != null && (biometricHost != authenticating || authenticating != engine.challenge ||
+            evidence.foreground != authenticating?.packageName)) {
+            val dismiss = biometricDismiss; biometricDismiss = null
+            handler.post { Diagnostics.record("biometric_host_invalidated"); dismiss?.invoke() }
+        }
         if (!engine.uncertain && engine.visible.none { it in engine.protectedApps }) shield.clearSessionUi()
         if (biometricCover != null && biometricCover == authenticating && biometricCover == engine.challenge && !engine.uncertain) return
         biometricCover = null
@@ -285,34 +298,46 @@ class LockerService : AccessibilityService() {
     fun biometric(token: LockEngine.Challenge) {
         if (android.os.Build.VERSION.SDK_INT < 29) { shield.message.value = "Use PIN on this Android version."; return }
         if (token != engine.challenge) { Diagnostics.record("biometric_stale_action"); shield.message.value = "The app changed. Try fingerprint again."; return }
-        if (engine.uncertain || deviceUnavailable() || systemPanelActive) return
+        if (engine.uncertain || deviceUnavailable() || systemPanelActive || pendingForeground != null || token.packageName !in snapshotProtected) return
         if (authenticating != null) { Diagnostics.record("biometric_already_requested"); return }
         Diagnostics.record("biometric_action_received")
         automaticBiometric.take(token)
+        evidence.adoptAuthenticationTarget(token.packageName, snapshotProtected)
         authenticating = token
+        // Bind the verified launch before startActivity: accessibility can report
+        // its obscuring transition even before the host's onCreate is dispatched.
+        biometricHost = token
         try {
             // The auth-only task must not reuse a finishing singleTask host with an old token.
             // The overlay already covers the new challenge while the old auth task is cleared.
             startActivity(Intent(this, BiometricActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION).putExtra("generation", token.generation).putExtra("package", token.packageName))
             Diagnostics.record("biometric_launch_requested")
-        } catch (_: Exception) { authenticating = null; Diagnostics.record("biometric_launch_denied"); shield.message.value = "Biometric screen unavailable. Use PIN." }
+        } catch (_: Exception) { authenticating = null; biometricHost = null; Diagnostics.record("biometric_launch_denied"); shield.message.value = "Biometric screen unavailable. Use ${app.vault.kind().label}." }
     }
     fun shieldReady(token: LockEngine.Challenge) {
         if (token != engine.challenge || engine.uncertain || deviceUnavailable() || systemPanelActive || authenticating != null) return
-        if ((pendingForeground == null || transitionFrames == 0) && token.packageName in snapshotProtected && biometricAvailable && automaticBiometric.take(token)) {
+        if (pendingForeground == null && token.packageName in snapshotProtected && biometricAvailable && automaticBiometric.take(token)) {
             Diagnostics.record("biometric_automatic_requested")
             biometric(token)
         }
     }
-    fun biometricHostStarted(token: LockEngine.Challenge): Boolean {
-        // Revalidate before this Activity owns a window.
+    fun biometricHostStarted(token: LockEngine.Challenge, dismiss: () -> Unit): Boolean {
+        // Starting our opaque Activity can itself remove the obscured target from
+        // Samsung's next snapshot. Bind the already verified launch before scanning;
+        // a newer foreground event, panel or changed challenge still rejects it.
+        if (!isCurrent(token) || biometricHost != token || pendingForeground != null || systemPanelActive || evidence.foreground != token.packageName) { Diagnostics.record("biometric_host_target_gone"); return false }
         scan(null)
-        if (!isCurrent(token) || systemPanelActive || token.packageName !in snapshotProtected) { Diagnostics.record("biometric_host_target_gone"); return false }
-        evidence.adoptAuthenticationTarget(token.packageName, snapshotProtected)
-        biometricHost = token
+        if (!isCurrent(token) || pendingForeground != null || systemPanelActive || evidence.foreground != token.packageName || deviceUnavailable()) {
+            if (biometricHost == token) biometricHost = null
+            Diagnostics.record("biometric_host_target_changed")
+            return false
+        }
+        biometricDismiss = dismiss
         return true
     }
     fun biometricHostCommitted(token: LockEngine.Challenge): Boolean {
+        scan(null)
+        if (pendingForeground != null) return false
         if (!isCurrent(token) || biometricHost != token || engine.uncertain || evidence.foreground != token.packageName || deviceUnavailable()) return false
         biometricCover = token
         // The opaque Activity has submitted a frame. It is now the privacy shield;
@@ -323,6 +348,7 @@ class LockerService : AccessibilityService() {
     }
     fun biometricHostStopped(token: LockEngine.Challenge) {
         if (biometricHost == token) {
+            biometricDismiss = null
             biometricHost = null; biometricCover = null
             scan(null)
         }
@@ -331,10 +357,11 @@ class LockerService : AccessibilityService() {
         if (authenticating != token) { finishAfterShield(finishHost); return }
         scan(null)
         if (authenticating != token) { finishAfterShield(finishHost); return }
+        biometricDismiss = null
         authenticating = null; biometricHost = null; biometricCover = null
         val accepted = engine.authenticate(token, success)
         Diagnostics.record(if (accepted) "biometric_accepted" else "biometric_rejected_or_stale")
-        shield.message.value = if (accepted) "Unlocked" else "Use PIN or try fingerprint again"
+        shield.message.value = if (accepted) "Unlocked" else "Use ${app.vault.kind().label} or try fingerprint again"
         shield.pinFallback.value = !accepted
         render()
         finishAfterShield(finishHost)
@@ -342,7 +369,7 @@ class LockerService : AccessibilityService() {
     private fun finishAfterShield(finishHost: () -> Unit) {
         biometricCover = null
         render()
-        if (engine.shieldRequired && shield.isAttached) shield.afterOpaqueFrame(finishHost) else finishHost()
+        if (engine.shieldRequired && shield.isAttached) shield.afterOpaqueFrame(finishOnRemoval = true, action = finishHost) else finishHost()
     }
     fun isCurrent(token: LockEngine.Challenge) = ready && authenticating == token && engine.challenge == token
     fun home() { authenticating = null; engine.invalidateChallenge(); performGlobalAction(GLOBAL_ACTION_HOME) /* shield stays until a subsequent window event */ }

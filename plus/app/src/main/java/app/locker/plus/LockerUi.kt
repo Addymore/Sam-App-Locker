@@ -91,58 +91,38 @@ import androidx.compose.ui.unit.dp
 
 @Composable fun AuthPanel(title: String, subtitle: String, error: String = "", enabled: Boolean = true,
     identity: Any? = title, preferPin: Boolean = false, autoPinLength: Int = 0,
+    credentialKind: CredentialKind = CredentialKind.PIN, onKindChange: ((CredentialKind) -> Unit)? = null,
     onPin: (CharArray, () -> Unit) -> Unit, onBiometric: (() -> Unit)? = null,
     onHome: (() -> Unit)? = null, exitLabel: String = "Return home", onPinVisibility: (Boolean) -> Unit = {}) {
-    var pin by remember(identity) { mutableStateOf("") }
-    var busy by remember(identity) { mutableStateOf(false) }
-    var pinVisible by remember(identity) { mutableStateOf(onBiometric == null || preferPin) }
-    LaunchedEffect(preferPin, onBiometric == null) { if (preferPin || onBiometric == null) pinVisible = true }
-    LaunchedEffect(pinVisible) { onPinVisibility(pinVisible) }
-    fun submit() {
-        if (!enabled || busy || pin.length !in 6..12) return
-        busy = true
-        val value = pin.toCharArray(); pin = ""
-        onPin(value) { busy = false }
-    }
+    var busy by remember(identity, credentialKind) { mutableStateOf(false) }
+    // Touch-only credentials do not need window focus. Taking it can hide the
+    // underlying application's window from Samsung's accessibility snapshot.
+    LaunchedEffect(credentialKind) { onPinVisibility(credentialKind == CredentialKind.PASSWORD) }
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Box(Modifier.fillMaxSize().safeDrawingPadding(), contentAlignment = Alignment.Center) {
             Column(Modifier.widthIn(max = 440.dp).fillMaxWidth().verticalScroll(rememberScrollState()).padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(18.dp)) {
-                Text("Sam App Locker", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer) {
-                    PrivacyMark(fingerprint = onBiometric != null, modifier = Modifier.padding(18.dp).size(48.dp))
+                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("SAM APP LOCKER", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.primaryContainer) {
+                    PrivacyMark(fingerprint = onBiometric != null, modifier = Modifier.padding(16.dp).size(40.dp))
                 }
                 Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
                 Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                onKindChange?.let { change ->
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        CredentialKind.entries.forEach { kind -> FilterChip(selected = credentialKind == kind,
+                            onClick = { if (!busy) change(kind) }, label = { Text(kind.label) }, enabled = !busy) }
+                    }
+                }
                 if (error.isNotEmpty()) Text(error, color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center,
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
                 if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-                if (pinVisible) {
-                    Card(shape = RoundedCornerShape(32.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-                        Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(if (pin.isEmpty()) "Enter PIN" else "●".repeat(pin.length),
-                                style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(vertical = 12.dp).semantics { contentDescription = "PIN, ${pin.length} digits entered" })
-                            listOf(listOf("1", "2", "3"), listOf("4", "5", "6"), listOf("7", "8", "9"), listOf("Clear", "0", "⌫")).forEach { row ->
-                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    row.forEach { digit ->
-                                        TextButton(onClick = { pin = when (digit) { "Clear" -> ""; "⌫" -> pin.dropLast(1); else -> (pin + digit).take(12) }; if (digit.length == 1 && shouldAutoSubmitPin(autoPinLength, pin.length)) submit() },
-                                            modifier = Modifier.weight(1f).heightIn(min = 56.dp).semantics { contentDescription = if (digit == "⌫") "Delete last digit" else digit },
-                                            enabled = enabled && !busy) { Text(digit, style = if (digit == "Clear") MaterialTheme.typography.labelLarge else MaterialTheme.typography.headlineSmall) }
-                                    }
-                                }
-                            }
-                            if (autoPinLength == 0) Button(onClick = { submit() },
-                                enabled = enabled && !busy && pin.length >= 6, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text("Continue") }
-                        }
-                    }
-                    onBiometric?.let { action -> TextButton(onClick = { Diagnostics.record("biometric_button_tapped"); action() }, enabled = enabled && !busy) { Text("Use fingerprint") } }
-                } else {
-                    onBiometric?.let { action ->
-                        Button(onClick = { Diagnostics.record("biometric_button_tapped"); action() }, enabled = enabled && !busy,
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) { Text("Unlock with fingerprint") }
-                    }
-                    TextButton(onClick = { pinVisible = true }, enabled = enabled && !busy, modifier = Modifier.heightIn(min = 48.dp)) { Text("Use PIN instead") }
+                // Never strand the user on a method chooser if the system prompt is delayed.
+                CredentialInput(credentialKind, identity, enabled && !busy, autoPinLength) { value ->
+                    if (!busy && enabled) { busy = true; onPin(value) { busy = false } } else value.fill('\u0000')
                 }
+                onBiometric?.let { action -> TextButton(onClick = { Diagnostics.record("biometric_button_tapped"); action() },
+                    enabled = enabled && !busy, modifier = Modifier.heightIn(min = 48.dp)) { Text("Use fingerprint") } }
                 onHome?.let { TextButton(onClick = it, modifier = Modifier.heightIn(min = 48.dp)) { Text(exitLabel) } }
             }
         }

@@ -24,6 +24,7 @@ class PrivacyShield(private val service: LockerService) : LifecycleOwner, ViewMo
     private val uncertain = mutableStateOf(false)
     val message = mutableStateOf("")
     val pinFallback = mutableStateOf(false)
+    private val removalActions = mutableListOf<() -> Unit>()
     private var attached = false
     val isAttached get() = attached
     var awaitingFirstFrame = false; private set
@@ -64,7 +65,7 @@ class PrivacyShield(private val service: LockerService) : LifecycleOwner, ViewMo
                 AuthPanel(title = if (uncertain.value) "Window cannot be verified" else "App is locked", subtitle = if (current == null) "Return home and open the app in full screen." else appLabel.value.ifEmpty { current.packageName },
                     error = message.value, enabled = current != null && !uncertain.value, identity = current,
                     onPin = { pin, done -> current?.let { service.verifyPin(it, pin) { message.value = it; done() } } ?: done() },
-                    preferPin = pinFallback.value,
+                    preferPin = pinFallback.value, credentialKind = service.app.vault.kind(),
                     autoPinLength = if (service.app.config.state.value.autoPin) service.app.vault.pinLength() else 0,
                     onBiometric = if (service.biometricAvailable) ({ current?.let(service::biometric) }) else null, onHome = service::home, onPinVisibility = ::setPinFocus)
             } }
@@ -119,15 +120,19 @@ class PrivacyShield(private val service: LockerService) : LifecycleOwner, ViewMo
     }
     fun clearSessionUi() { presentedPackage = null; pinFallback.value = false; message.value = "" }
     /** Never finish an opaque auth host until its replacement frame is submitted. */
-    fun afterOpaqueFrame(action: () -> Unit) {
+    fun afterOpaqueFrame(finishOnRemoval: Boolean = false, action: () -> Unit) {
         if (!attached) return
         // isHardwareAccelerated can still be false immediately after addView.
         // The window explicitly requests hardware rendering; its floating observer
         // carries this callback into the attached tree for the very first frame.
         if (android.os.Build.VERSION.SDK_INT < 29) return
         val currentAttachment = attachment
+        if (finishOnRemoval) removalActions.add(action)
         frame.viewTreeObserver.registerFrameCommitCallback {
-            frame.post { if (attached && attachment == currentAttachment) { Diagnostics.record("shield_return_frame_committed"); action() } }
+            frame.post { if (attached && attachment == currentAttachment) {
+                removalActions.remove(action)
+                Diagnostics.record("shield_return_frame_committed"); action()
+            } }
         }
         frame.invalidate()
     }
@@ -139,6 +144,8 @@ class PrivacyShield(private val service: LockerService) : LifecycleOwner, ViewMo
         // Next attachment must submit the native opaque backing before rebuilding UI.
         frame.removeView(compose)
         compose.disposeComposition()
+        val finishers = removalActions.toList(); removalActions.clear()
+        finishers.forEach { it() }
         Diagnostics.record("shield_remove_submitted", SystemClock.elapsedRealtime() - start)
     }
     fun destroy() { hide(); registry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY); viewModelStore.clear() }

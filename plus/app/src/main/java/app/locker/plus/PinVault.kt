@@ -29,7 +29,8 @@ class PinVault(context: Context) {
     private val argon by lazy {
         try { Argon2Kt() } catch (e: LinkageError) { throw IllegalStateException("PIN library unavailable", e) }
     }
-    fun pinLength() = prefs.getInt("pin_length", 0).takeIf { it in 6..12 } ?: 0
+    fun kind() = runCatching { CredentialKind.valueOf(prefs.getString("kind", "PIN")!!) }.getOrDefault(CredentialKind.PIN)
+    fun pinLength() = if (kind() != CredentialKind.PIN) 0 else prefs.getInt("pin_length", 0).takeIf { it in 6..12 } ?: 0
     fun exists() = prefs.contains("sealed")
     private fun key(): SecretKey {
         val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
@@ -49,11 +50,12 @@ class PinVault(context: Context) {
         while (buffer.hasRemaining()) buffer.put(0.toByte())
     }
     private fun derive(pin: CharArray, salt: ByteArray): ByteArray {
-        require(pin.size in 6..12 && pin.all { it in '0'..'9' })
-        val password = ByteBuffer.allocateDirect(pin.size)
+        val utf8 = java.nio.charset.StandardCharsets.UTF_8.encode(java.nio.CharBuffer.wrap(pin))
+        val password = ByteBuffer.allocateDirect(utf8.remaining())
+        password.put(utf8)
+        wipe(utf8)
         val saltBuffer = ByteBuffer.allocateDirect(salt.size).put(salt)
         try {
-            pin.forEach { password.put(it.code.toByte()) }
             // OWASP Argon2id baseline; native implementation avoids Android's slow Java PBKDF2 loop.
             val result = argon.hash(Argon2Mode.ARGON2_ID, password, saltBuffer,
                 tCostInIterations = 2, mCostInKibibyte = 19 * 1024, parallelism = 1,
@@ -62,10 +64,10 @@ class PinVault(context: Context) {
             finally { wipe(result.rawHash); wipe(result.encodedOutput) }
         } finally { wipe(password); wipe(saltBuffer) }
     }
-    private fun newRecord(pin: CharArray): ByteArray {
+    private fun newRecord(pin: CharArray, kind: CredentialKind): ByteArray {
         val salt = ByteArray(16).also(random::nextBytes)
         val hash = derive(pin, salt)
-        return try { byteArrayOf(0x53, 0x41, 0x4C, 2) + salt + hash }
+        return try { byteArrayOf(0x53, 0x41, 0x4C, 3, kind.ordinal.toByte()) + salt + hash }
         finally { salt.fill(0); hash.fill(0) }
     }
     private fun seal(plain: ByteArray): String {
@@ -74,11 +76,11 @@ class PinVault(context: Context) {
             return Base64.encodeToString(cipher.iv + cipher.doFinal(plain), Base64.NO_WRAP)
         } finally { plain.fill(0) }
     }
-    @Synchronized fun enroll(pin: CharArray) {
+    @Synchronized fun enroll(pin: CharArray, kind: CredentialKind = CredentialKind.PIN) {
         try {
-            require(pin.size in 6..12 && pin.all { it in '0'..'9' })
-            val sealed = seal(newRecord(pin))
-            check(prefs.edit().putString("sealed", sealed).putInt("pin_length", pin.size).putInt("failures", 0).commit())
+            require(validCredential(pin, kind))
+            val sealed = seal(newRecord(pin, kind))
+            check(prefs.edit().putString("sealed", sealed).putInt("pin_length", if (kind == CredentialKind.PIN) pin.size else 0).putString("kind", kind.name).putInt("failures", 0).commit())
             blockedUntil = 0
             initialized = true
         } finally { pin.fill('\u0000') }
@@ -87,39 +89,43 @@ class PinVault(context: Context) {
     @Synchronized fun verify(pin: CharArray): Result {
         val started = SystemClock.elapsedRealtime()
         try {
+            val kind = kind()
             val failures = prefs.getInt("failures", 0)
             // Restarting the process or rebooting cannot skip the persistent failure penalty.
             if (!initialized) { initialized = true; if (failures >= 5) blockedUntil = SystemClock.elapsedRealtime() + penalty(failures) }
             val remaining = blockedUntil - SystemClock.elapsedRealtime()
             if (remaining > 0) return Result(false, "Try again in ${(remaining + 999) / 1000} seconds")
-            if (!exists()) return Result(false, "Set up your PIN in Sam App Locker")
+            if (!exists()) return Result(false, "Set up authentication in Sam App Locker")
+            if (pin.size > 64) return Result(false, "Credential is too long")
             // Persist the attempt before expensive work; killing the process cannot erase it.
             val count = (failures + 1).coerceAtMost(20)
             check(prefs.edit().putInt("failures", count).commit())
             val data = Base64.decode(prefs.getString("sealed", null), Base64.NO_WRAP)
-            require(data.size in 76..80)
+            require(data.size in 76..81)
             val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, data.copyOfRange(0, 12))) }
             val plain = cipher.doFinal(data.copyOfRange(12, data.size))
             val legacy = plain.size == 48
             val success = try {
-                require(legacy || (plain.size == 52 && plain.take(4) == listOf<Byte>(0x53, 0x41, 0x4C, 2)))
-                val offset = if (legacy) 0 else 4
+                val v2 = plain.size == 52 && plain.take(4) == listOf<Byte>(0x53, 0x41, 0x4C, 2)
+                val v3 = plain.size == 53 && plain.take(4) == listOf<Byte>(0x53, 0x41, 0x4C, 3) && plain[4].toInt() == kind.ordinal
+                require((legacy || v2) && kind == CredentialKind.PIN || v3)
+                val offset = if (legacy) 0 else if (v2) 4 else 5
                 val salt = plain.copyOfRange(offset, offset + 16)
                 val expected = plain.copyOfRange(offset + 16, plain.size)
                 val actual = try { if (legacy) deriveLegacy(pin, salt) else derive(pin, salt) }
                     finally { salt.fill(0) }
-                try { MessageDigest.isEqual(actual, expected) }
+                try { validCredential(pin, kind) && MessageDigest.isEqual(actual, expected) }
                 finally { actual.fill(0); expected.fill(0) }
             } finally { plain.fill(0) }
             if (success) {
-                val editor = prefs.edit().putInt("failures", 0).putInt("pin_length", pin.size)
+                val editor = prefs.edit().putInt("failures", 0).putInt("pin_length", if (kind == CredentialKind.PIN) pin.size else 0)
                 // Authenticate the old record first, then atomically replace it. Failed attempts never migrate.
-                if (legacy) editor.putString("sealed", seal(newRecord(pin)))
+                if (legacy) editor.putString("sealed", seal(newRecord(pin, kind)))
                 check(editor.commit()); blockedUntil = 0
                 if (legacy) Diagnostics.record("pin_format_upgraded")
             }
             else if (count >= 5) blockedUntil = SystemClock.elapsedRealtime() + penalty(count)
-            return Result(success, if (success) "Unlocked" else "Incorrect PIN")
+            return Result(success, if (success) "Unlocked" else "Incorrect ${kind.label.lowercase()}")
         } catch (_: Exception) {
             blockedUntil = SystemClock.elapsedRealtime() + 30_000
             return Result(false, "Credential unavailable. Reopen Sam App Locker; reset app data if the key was lost.")

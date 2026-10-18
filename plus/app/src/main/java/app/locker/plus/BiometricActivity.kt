@@ -24,7 +24,7 @@ class BiometricActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         token = LockEngine.Challenge(intent.getStringExtra("package") ?: "", intent.getLongExtra("generation", -1))
-        if (LockerService.instance?.biometricHostStarted(token) != true || isInMultiWindowMode) { complete(false); return }
+        if (LockerService.instance?.biometricHostStarted(token) { invalidateHost() } != true || isInMultiWindowMode) { complete(false); return }
         app.io.execute {
             val label = runCatching { packageManager.getApplicationLabel(packageManager.getApplicationInfo(token.packageName, 0)).toString() }.getOrDefault("Protected app")
             runOnUiThread { if (!isDestroyed) appName = label }
@@ -38,6 +38,12 @@ class BiometricActivity : FragmentActivity() {
         if (BiometricManager.from(this).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) != BiometricManager.BIOMETRIC_SUCCESS) { complete(false); return }
         if (android.os.Build.VERSION.SDK_INT < 29) { complete(false); return }
         restoringPrompt = savedInstanceState != null
+    }
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        // Rotation/no-animation launches need not deliver a new enter-animation callback.
+        // The subsequent frame-commit callback still guards the opaque handoff.
+        if (hasFocus) { entryComplete = true; handoffWhenReady() }
     }
     override fun onEnterAnimationComplete() {
         super.onEnterAnimationComplete()
@@ -54,11 +60,15 @@ class BiometricActivity : FragmentActivity() {
                 if (!completed && !isFinishing) {
                     if (LockerService.instance?.biometricHostCommitted(token) != true) complete(false)
                     else if (!restoringPrompt) prompt.authenticate(BiometricPrompt.PromptInfo.Builder().setTitle("Unlock Sam App Locker")
-                        .setSubtitle(appName).setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG).setNegativeButtonText("Use PIN").build())
+                        .setSubtitle(appName).setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG).setNegativeButtonText("Use ${app.vault.kind().label}").build())
                 }
             }
         }
         window.decorView.invalidate()
+    }
+    private fun invalidateHost() {
+        if (::prompt.isInitialized) prompt.cancelAuthentication()
+        complete(false)
     }
     private fun complete(success: Boolean) {
         if (completed) return

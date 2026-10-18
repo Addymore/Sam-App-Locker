@@ -42,6 +42,7 @@ class MainActivity : FragmentActivity() {
     private var enrolled by mutableStateOf(false)
     private var error by mutableStateOf("")
     private var confirm: CharArray? = null
+    private var enrollmentKind by mutableStateOf(CredentialKind.PIN)
     private var confirmation by mutableStateOf(false)
     private var accessibilityGranted by mutableStateOf(false)
     private var rows by mutableStateOf<List<AppRow>>(emptyList())
@@ -73,7 +74,7 @@ class MainActivity : FragmentActivity() {
             override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                 if (!biometricPending || biometricEpoch != lifecycleEpoch) return
                 biometricPending = false; preferPin = true
-                error = if (errorCode == BiometricPrompt.ERROR_NEGATIVE_BUTTON || errorCode == BiometricPrompt.ERROR_USER_CANCELED) "" else "Fingerprint unavailable. Use your app PIN."
+                error = if (errorCode == BiometricPrompt.ERROR_NEGATIVE_BUTTON || errorCode == BiometricPrompt.ERROR_USER_CANCELED) "" else "Fingerprint unavailable. Use your app credential."
             }
         })
         app.credentials.execute { val exists = app.vault.exists(); runOnUiThread { enrolled = exists; loaded = true } }
@@ -87,14 +88,16 @@ class MainActivity : FragmentActivity() {
                 else if (removal != null && authorized) AuthPanel(
                     title = "Uninstall ${removal.label}?",
                     subtitle = "Authenticate to open Android’s uninstall confirmation. Removal outside Sam App Locker is controlled by Android.",
-                    identity = removal.pkg, error = error, preferPin = preferPin,
+                    identity = removal.pkg, error = error, preferPin = preferPin, credentialKind = app.vault.kind(),
                     autoPinLength = if (app.config.state.value.autoPin) app.vault.pinLength() else 0,
                     onPin = { pin, done -> authenticateRemoval(removal, pin, done) },
                     onBiometric = if (strongAvailable) ({ startBiometric() }) else null,
                     onHome = { pendingRemoval = null; error = ""; preferPin = false }, exitLabel = "Keep app")
                 else if (!authorized) AuthPanel(
-                    title = if (enrolled) "Welcome back" else if (confirmation) "Confirm your PIN" else "Create a private PIN",
-                    subtitle = if (enrolled) "Your apps. Your privacy." else "Choose 6–12 digits. Keep this PIN private.",
+                    title = if (enrolled) "Welcome back" else if (confirmation) "Confirm your ${enrollmentKind.label.lowercase()}" else "Choose your app lock",
+                    subtitle = if (enrolled) "Your apps. Your privacy." else enrollmentKind.hint,
+                    credentialKind = if (enrolled) app.vault.kind() else enrollmentKind,
+                    onKindChange = if (!enrolled && !confirmation) ({ kind -> enrollmentKind = kind; error = "" }) else null,
                     identity = if (enrolled) "login" else if (confirmation) "confirm" else "enroll",
                     error = error, preferPin = preferPin,
                     autoPinLength = if (enrolled && app.config.state.value.autoPin) app.vault.pinLength() else 0,
@@ -129,17 +132,18 @@ class MainActivity : FragmentActivity() {
         biometricPrompt.authenticate(BiometricPrompt.PromptInfo.Builder()
             .setTitle(if (pendingRemoval == null) "Open Sam App Locker" else "Confirm app removal")
             .setSubtitle(pendingRemoval?.label ?: "Authenticate to manage your protected apps")
-            .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG).setNegativeButtonText("Use PIN").build())
+            .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG).setNegativeButtonText("Use ${app.vault.kind().label}").build())
     }
     private fun authenticate(pin: CharArray, done: () -> Unit) {
         val epoch = lifecycleEpoch
         if (!enrolled) {
             if (!confirmation) { confirm?.fill('\u0000'); confirm = pin; confirmation = true; error = ""; done(); return }
-            if (confirm?.contentEquals(pin) != true) { confirm?.fill('\u0000'); confirm = null; pin.fill('\u0000'); confirmation = false; error = "PINs did not match. Try again."; done(); return }
+            if (confirm?.contentEquals(pin) != true) { confirm?.fill('\u0000'); confirm = null; pin.fill('\u0000'); confirmation = false; error = "Entries did not match. Try again."; done(); return }
             confirm?.fill('\u0000'); confirm = null
             app.credentials.execute {
-                val success = runCatching { app.vault.enroll(pin) }.isSuccess
-                runOnUiThread { if (epoch == lifecycleEpoch) { enrolled = success; authorized = success; confirmation = false; error = if (success) "" else "Could not save PIN securely" }; done() }
+                val selectedKind = enrollmentKind
+                val success = runCatching { app.vault.enroll(pin, selectedKind) }.isSuccess
+                runOnUiThread { if (epoch == lifecycleEpoch) { if (success) app.config.prefs.edit().putLong("credential_epoch", System.nanoTime()).apply(); enrolled = success; authorized = success; confirmation = false; error = if (success) "" else "Could not save credential securely" }; done() }
             }
         } else app.credentials.execute {
             val result = app.vault.verify(pin)
@@ -220,13 +224,31 @@ class MainActivity : FragmentActivity() {
                                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                     Text(status, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                                     Text("${selected.size} apps in your private space", style = MaterialTheme.typography.bodyMedium)
-                                    Text("Only you have the key", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(if (strongAvailable) "${app.vault.kind().label} + fingerprint" else app.vault.kind().label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     if (!active) TextButton(onClick = { tab = 2 }) { Text("Complete setup") }
                                 }
                             }
                         }
                     }
                     if (tab != 2) {
+                        val suggested = rows.filter { it.pkg !in selected && suggestedCategory(it.pkg) != null }
+                        if (search.isBlank() && suggested.isNotEmpty() && (tab == 1 || selected.isEmpty())) item {
+                            LockerCard("A little more privacy") {
+                                Text("Suggested for you", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                                Text("Chats, messages, photos and notes often contain personal information. Choose what belongs in your private space.")
+                                suggested.take(8).forEach { row ->
+                                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        Image(row.icon.asImageBitmap(), null, Modifier.size(40.dp))
+                                        Column(Modifier.weight(1f)) {
+                                            Text(row.label, style = MaterialTheme.typography.titleSmall)
+                                            Text(suggestedCategory(row.pkg)!!, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                        FilledTonalButton(onClick = { if (authorized) app.config.toggle(row.pkg, true) }) { Text("Lock") }
+                                    }
+                                }
+                                Text("Suggestions only. Nothing is locked until you choose it.", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
                         item {
                             Text(if (tab == 0) "Your locked apps" else "Choose apps to lock", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                             Spacer(Modifier.height(12.dp))
@@ -281,7 +303,7 @@ class MainActivity : FragmentActivity() {
                     } }
                     item { LockerCard("Authentication") {
                         val strong = BiometricManager.from(this@MainActivity).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)
-                        Text(if (strong == BiometricManager.BIOMETRIC_SUCCESS) "Strong biometric available. Fingerprint opens first; PIN is available as a fallback." else "Strong biometric unavailable or not enrolled. PIN remains available.")
+                        Text(if (strong == BiometricManager.BIOMETRIC_SUCCESS) "Strong biometric available. Fingerprint opens first; your chosen fallback stays ready underneath." else "Strong biometric unavailable or not enrolled. Use your chosen app credential.")
                         Text("Face unlock is offered only if Android exposes it as a strong biometric. Many Samsung face configurations do not qualify.")
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
@@ -290,7 +312,8 @@ class MainActivity : FragmentActivity() {
                             }
                             Switch(checked = settings.autoPin, onCheckedChange = { if (authorized) app.config.prefs.edit().putBoolean("auto_pin", it).apply() })
                         }
-                        TextButton(onClick = { if (authorized) { enrolled = false; authorized = false; confirmation = false; error = "" } }) { Text("Change app PIN") }
+                        Text("Current fallback: ${app.vault.kind().label}", style = MaterialTheme.typography.titleMedium)
+                        TextButton(onClick = { if (authorized) { enrollmentKind = app.vault.kind(); enrolled = false; authorized = false; confirmation = false; error = "" } }) { Text("Change PIN, pattern or password") }
                     } }
                     item { LockerCard("Relock rules") {
                         LockEngine.Rule.entries.forEach { rule ->

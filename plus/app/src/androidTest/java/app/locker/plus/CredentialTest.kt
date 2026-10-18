@@ -105,4 +105,37 @@ class CredentialTest {
         val sealed = context.getSharedPreferences("credential", 0).getString("sealed", "")!!
         assertFalse(sealed.contains("246813")); assertTrue(sealed.length > 60)
     }
+    @Test fun patternAndUnicodePasswordSurviveRecreationAndRejectWrongValues() {
+        val context = context()
+        for ((kind, secret, wrong) in listOf(
+            Triple(CredentialKind.PATTERN, "01258", "03678"),
+            Triple(CredentialKind.PASSWORD, "Café Kigali 123!", "Cafe Kigali 123!"))) {
+            val input = secret.toCharArray()
+            context.app.vault.enroll(input, kind)
+            assertTrue(input.all { it == '\u0000' })
+            assertEquals(kind, PinVault(context).kind())
+            assertEquals(0, PinVault(context).pinLength())
+            assertFalse(PinVault(context).verify(wrong.toCharArray()).success)
+            assertTrue(PinVault(context).verify(secret.toCharArray()).success)
+            repeat(5) { assertFalse(context.app.vault.verify(wrong.toCharArray()).success) }
+            assertFalse(PinVault(context).verify(secret.toCharArray()).success)
+        }
+        context.app.vault.enroll("246813".toCharArray())
+    }
+    @Test fun versionTwoPinRemainsReadableAndKindTamperingFailsClosed() {
+        val context = context(); val prefs = context.getSharedPreferences("credential", 0)
+        context.app.vault.enroll("246813".toCharArray())
+        val key = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.getKey("pin-verifier-v1", null) as SecretKey
+        val data = Base64.decode(prefs.getString("sealed", null), Base64.NO_WRAP)
+        val decrypt = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.DECRYPT_MODE, key, javax.crypto.spec.GCMParameterSpec(128, data.copyOfRange(0, 12))) }
+        val record = decrypt.doFinal(data.copyOfRange(12, data.size))
+        val v2 = byteArrayOf(0x53, 0x41, 0x4c, 2) + record.copyOfRange(5, record.size)
+        val encrypt = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key) }
+        prefs.edit().putString("sealed", Base64.encodeToString(encrypt.iv + encrypt.doFinal(v2), Base64.NO_WRAP)).remove("kind").commit()
+        record.fill(0); v2.fill(0)
+        assertTrue(PinVault(context).verify("246813".toCharArray()).success)
+        prefs.edit().putString("kind", "PATTERN").commit()
+        assertFalse(PinVault(context).verify("246813".toCharArray()).success)
+        context.app.vault.enroll("246813".toCharArray())
+    }
 }
