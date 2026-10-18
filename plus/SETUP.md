@@ -1,17 +1,29 @@
 # Sam App Locker — Samsung setup
 
 1. Install the release APK (`app.sam.locker`). Debug uses `app.sam.locker.debug`. These new package IDs do not inherit the PIN, selected apps or accessibility grant from v1.0/older candidates. Configure the new installation, then disable the old locker service. Both coexist with upstream AppLock; run only one protection service.
-2. Open Sam App Locker and create/confirm a 6–12 digit app PIN. Choose a PIN you can remember; it is independent of your device unlock PIN.
+2. Open Sam App Locker and create/confirm an app credential: a 6–12 digit PIN, a pattern connecting 4–9 dots, or an 8–64 character password containing letters and numbers. It is independent of your device unlock credential. Version 1.2 updates the same release package in place and retains existing PINs and selections. Change the method from authenticated Settings → Change PIN, pattern or password.
 3. Open the Settings tab, then the Accessibility Settings button. Under Installed apps/services, select Sam App Locker, review its disclosed window-access capability, then enable it yourself.
 4. If Samsung blocks this because the APK was sideloaded, open Settings → Apps → Sam App Locker → More options → Allow restricted settings, if that option is offered. Return to Accessibility. Do not disable Play Protect. If installation is blocked, retain that protection and investigate the warning.
 5. Return to the app and authenticate. Confirm the service is connected and the dashboard shows Protection active. Select a non-sensitive test app first.
 6. Optional reliability setup: Settings → Apps → Sam App Locker → Battery → Unrestricted, if offered. Battery → Background usage limits: remove from Sleeping/Deep sleeping; add to Never sleeping if offered. Samsung's documentation confirms these categories; exact wording and availability vary by One UI build. Do not assume that changing battery settings guarantees survival.
-7. Enroll fingerprint through Samsung Settings if desired. Strong biometric availability is checked live. Weak-only face authentication is not accepted. PIN works offline without biometric enrollment. Sam App Locker requires Android 15/API 35 or later. Biometric handoff requires full-screen mode.
+7. Enroll fingerprint through Samsung Settings if desired. Strong biometric availability is checked live. Weak-only face authentication is not accepted. All three app credential methods work offline without biometric enrollment. Sam App Locker requires Android 15/API 35 or later. Biometric handoff requires full-screen mode. PIN auto-confirm defaults on; disable it in authenticated Settings if you prefer Continue. Drawn patterns submit on release; passwords use Continue or the keyboard action.
 8. Use immediate/per-app relocking for the strongest supported default. Shared sessions and timeouts are convenience settings. Screen off always revokes sessions.
 
 You can disable the service, force-stop, reset app data or uninstall from Samsung Settings at any time. This app never blocks device recovery or emergency calls. After reboot/update/permission changes, verify connected status before relying on protection. If interrupted, reopen this app and, if needed, toggle the accessibility service off/on yourself.
 
 Keep protected apps full screen during initial testing. Split screen/pop-up protection is experimental. DeX, external displays, secure/work profiles, notifications, widgets and other apps' Recents thumbnails are outside the verified protection boundary.
+
+## Permissions and ADB
+
+- Accessibility is the required owner-controlled special-access grant. The service inspects window ownership, not text/passwords or node children.
+- The shield is TYPE_ACCESSIBILITY_OVERLAY, so the separate "Appear on top" / SYSTEM_ALERT_WINDOW grant for TYPE_APPLICATION_OVERLAY is not needed. Asking for both would not improve this architecture.
+- USE_BIOMETRIC is declared; enrollment and supported strong authenticators are checked separately. It is not an extra runtime permission dialog.
+- No usage polling, foreground service or app notification is implemented, so usage access, foreground-service and notification permissions are not requested.
+- REQUEST_DELETE_PACKAGES only opens Android's uninstall confirmation after authentication through this app. It does not block launcher/Settings removal or protect Sam App Locker from removal.
+- ADB is useful for install, operational diagnostics and reproducible tests. An ordinary permission grant does not supply OEM signing, device-owner status or guaranteed pre-display interception. WRITE_SECURE_SETTINGS, overlay permission and usage access are not fixes for the window-event races found here. Battery exemptions may help a different background-survival problem, but cannot repair those races or prevent force-stop/uninstall. Use the owner-controlled battery guidance above; no privileged ADB grants are required for this release.
+- Reliable uninstall blocking requires a separately provisioned device/profile-owner policy or authorized enterprise delegation. It is not implemented by this ordinary APK, and a basic device-admin toggle is not equivalent.
+
+References: [accessibility overlay](https://developer.android.com/reference/android/view/WindowManager.LayoutParams#TYPE_ACCESSIBILITY_OVERLAY), [application-overlay permission](https://developer.android.com/reference/android/Manifest.permission#SYSTEM_ALERT_WINDOW), [uninstall policy](https://developer.android.com/reference/android/app/admin/DevicePolicyManager#setUninstallBlocked(android.content.ComponentName,%20java.lang.String,%20boolean)), [ADB package manager](https://developer.android.com/tools/adb#pm).
 
 ## Build and install
 

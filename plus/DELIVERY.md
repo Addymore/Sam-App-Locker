@@ -1,6 +1,6 @@
 # Source and delivery
 
-Current release: **1.1.0**, versionCode 6, [release](https://github.com/Addymore/Sam-App-Locker/releases/tag/v1.1.0), Android 15+. It retains `app.sam.locker`, its signing certificate, and existing 1.1 candidate private data. Debug uses `app.sam.locker.debug`. See [UPDATE-1.1.md](UPDATE-1.1.md) and [RELEASE-1.1-VERIFICATION.md](RELEASE-1.1-VERIFICATION.md). Details below describe the original 1.0 delivery.
+Current release: **1.2.0**, versionCode 8, [release](https://github.com/Addymore/Sam-App-Locker/releases/tag/v1.2.0), Android 15+. It retains `app.sam.locker`, its signing certificate, and existing 1.1 private data. Debug uses `app.sam.locker.debug`. See [UPDATE-1.2.md](UPDATE-1.2.md) and [RELEASE-1.2-VERIFICATION.md](RELEASE-1.2-VERIFICATION.md). Details below describe the original 1.0 delivery.
 
 **Sam App Locker 1.0.0**, versionCode 2.
 

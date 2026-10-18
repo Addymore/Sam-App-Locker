@@ -1,15 +1,15 @@
 # Sam App Locker
 
-**Sam App Locker 1.1:** Android 15+ only, with Android 17 / One UI 9 window-handling refinements, fingerprint-first entry, automatic PIN confirmation, rounded cards and Locked/Unlocked tabs. [Release APKs](https://github.com/Addymore/Sam-App-Locker/releases/tag/v1.1.0) · [Changes](plus/UPDATE-1.1.md) · [Verification and remaining issues](plus/RELEASE-1.1-VERIFICATION.md).
+**Sam App Locker 1.2:** Android 15+, fingerprint-first entry with direct PIN, pattern or password fallback, refined credential cards, optional app suggestions, and Samsung authentication-handoff fixes. [Release APKs](https://github.com/Addymore/Sam-App-Locker/releases/tag/v1.2.0) · [Changes](plus/UPDATE-1.2.md) · [Verification and remaining issues](plus/RELEASE-1.2-VERIFICATION.md).
 
-An offline Kotlin/Jetpack Compose app locker for ordinary Samsung Galaxy phones. Material 3 cards, searchable app selection, strong fingerprint authentication and an app-specific PIN. Developed and tested on a Galaxy A57 running Android 17 / One UI 9.
+An offline Kotlin/Jetpack Compose app locker for ordinary Samsung Galaxy phones. Material 3 cards, searchable app selection, strong fingerprint authentication and an app-specific PIN, pattern or password. Developed and tested on a Galaxy A57 running Android 17 / One UI 9.
 
-[Download debug and signed release APKs](https://github.com/Addymore/Sam-App-Locker/releases/tag/v1.1.0) · [Samsung setup](plus/SETUP.md) · [Verification and known limits](plus/VERIFICATION.md) · [Security architecture](plus/ARCHITECTURE.md)
+[Download debug and signed release APKs](https://github.com/Addymore/Sam-App-Locker/releases/tag/v1.2.0) · [Samsung setup](plus/SETUP.md) · [Verification and known limits](plus/RELEASE-1.2-VERIFICATION.md) · [Security architecture](plus/ARCHITECTURE.md)
 
 ## Choose an APK
 
-- **Release (1.1):** `app.sam.locker`, signed with this project's dedicated release key, not debuggable. Recommended for a new installation. Create your own PIN and enable its Accessibility service.
-- **Debug (1.1):** `app.sam.locker.debug`, a separate debuggable installation intended for testing.
+- **Release (1.2):** `app.sam.locker`, signed with this project's dedicated release key, not debuggable. Updates 1.1 in place and retains credentials and selections. For a new installation, create your own credential and enable its Accessibility service.
+- **Debug (1.2):** `app.sam.locker.debug`, a separate debuggable installation intended for testing.
 
 The owner requested new package IDs for 1.1. They do not update the old 1.0 packages in place or inherit their private data/grants. These are separate installations. Moving from debug to release requires setup again; do not run both protection services together. No PIN or settings are uploaded. An existing preview PIN automatically migrates to Argon2id after the first successful PIN entry, which still performs the old slow verification once.
 
