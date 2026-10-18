@@ -143,7 +143,13 @@ class MainActivity : FragmentActivity() {
             app.credentials.execute {
                 val selectedKind = enrollmentKind
                 val success = runCatching { app.vault.enroll(pin, selectedKind) }.isSuccess
-                runOnUiThread { if (epoch == lifecycleEpoch) { if (success) app.config.prefs.edit().putLong("credential_epoch", System.nanoTime()).apply(); enrolled = success; authorized = success; confirmation = false; error = if (success) "" else "Could not save credential securely" }; done() }
+                runOnUiThread {
+                    // A completed credential change must revoke app sessions even
+                    // if the owner backgrounds this Activity while the KDF runs.
+                    if (success) app.config.prefs.edit().putLong("credential_epoch", System.nanoTime()).apply()
+                    if (epoch == lifecycleEpoch) { enrolled = success; authorized = success; confirmation = false; error = if (success) "" else "Could not save credential securely" }
+                    done()
+                }
             }
         } else app.credentials.execute {
             val result = app.vault.verify(pin)
@@ -174,7 +180,13 @@ class MainActivity : FragmentActivity() {
         if (::biometricPrompt.isInitialized) biometricPrompt.cancelAuthentication()
         authorized = false; pendingRemoval = null; preferPin = false
         confirm?.fill('\u0000'); confirm = null; confirmation = false; error = ""
-        app.credentials.execute { val exists = app.vault.exists(); runOnUiThread { enrolled = exists } }
+        // Never expose a stale enrollment form while the serialized credential
+        // executor is still finishing work from the previous foreground session.
+        loaded = false
+        val epoch = lifecycleEpoch
+        app.credentials.execute { val exists = app.vault.exists(); runOnUiThread {
+            if (epoch == lifecycleEpoch && !isDestroyed) { enrolled = exists; loaded = true }
+        } }
     }
     private fun launchSettings(intent: Intent) {
         runCatching { startActivity(intent) }.onFailure { runCatching { startActivity(Intent(Settings.ACTION_SETTINGS)) } }
