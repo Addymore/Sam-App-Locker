@@ -25,6 +25,10 @@ class BiometricUiProbeTest {
         Configurator.getInstance().uiAutomationFlags = UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES
         Configurator.getInstance().waitForIdleTimeout = 100
         val device = UiDevice.getInstance(instrumentation)
+        val launcher = instrumentation.targetContext.packageManager.resolveActivity(
+            Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME),
+            android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.packageName
+        assertNotNull("A launcher is required for this entry-path test", launcher)
         device.wakeUp()
         val keyguard = instrumentation.targetContext.getSystemService(android.app.KeyguardManager::class.java)
         val deadline = android.os.SystemClock.elapsedRealtime() + 180_000
@@ -34,6 +38,7 @@ class BiometricUiProbeTest {
         val mixedEntries = InstrumentationRegistry.getArguments().getString("mixedEntries", "false").toBoolean()
         repeat(cycles) { cycle ->
         device.pressHome()
+        assertTrue("Launcher not ready before cycle $cycle", device.wait(Until.hasObject(By.pkg(launcher!!)), 10_000))
         assertTrue("Previous shield did not leave Home", device.wait(Until.gone(By.pkg(lockerPackage).text("App is locked")), 10_000))
         val target = if (cycle % 2 == 0) "app.locker.fixture.blue" else "app.locker.fixture.red"
         if (cycle % 10 == 0 && InstrumentationRegistry.getArguments().getString("coldEntries", "false") == "true") {
