@@ -13,6 +13,14 @@ You can disable the service, force-stop, reset app data or uninstall from Samsun
 
 Keep protected apps full screen during initial testing. Split screen/pop-up protection is experimental. DeX, external displays, secure/work profiles, notifications, widgets and other apps' Recents thumbnails are outside the verified protection boundary.
 
+## Fingerprint-first controls (1.3)
+
+Fingerprint opens automatically once per protected-app visit when available. Dismissing it keeps the fingerprint action available without revealing the app credential. Tap the three-dot menu → Use PIN/Pattern/Password to reveal your configured fallback. The native prompt's Other methods action opens the same menu. While the native prompt is active, the other input controls and keyboard are not present behind it. If strong biometrics are unavailable or disabled, the configured credential remains directly usable.
+
+In authenticated Settings, Make it yours offers Material 3, One UI 9-inspired and ColorOS 17-inspired styles, light/dark/system modes and four offline background presets. Wallpaper colors apply to Material 3. These choices theme Sam App Locker; Android controls the fingerprint dialog. Comfort & feedback provides optional touch feedback and authentication-window brightness. The latter does not change the phone's saved brightness.
+
+Diagnostics can be disabled, cleared or exported through Android's document picker. Security reports contain capability status and a protected-app count, not app names or credentials. Exports are user-selected local documents; there is no automatic upload. See UPSTREAM-REVIEW.md for upstream feature parity and update handling.
+
 ## Permissions and ADB
 
 - Accessibility is the required owner-controlled special-access grant. The service inspects window ownership, not text/passwords or node children.

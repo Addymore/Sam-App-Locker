@@ -42,11 +42,12 @@ class RemovalUiTest {
             enterPin(device, "246813")
             assertTrue(device.wait(Until.hasObject(By.pkg(context.packageName).text("Your locked apps")), 10_000))
             device.findObject(By.clazz("android.widget.EditText")).text = "Locker public fixture"
+            device.wait(Until.findObject(By.desc("More actions for Locker public fixture")), 10_000).click()
             device.wait(Until.findObject(By.pkg(context.packageName).text("Uninstall…")), 10_000).click()
             selectPin(device)
             assertTrue("An already-authorized dashboard must not initiate uninstall", requests.isEmpty())
             enterPin(device, "000000")
-            assertTrue(device.wait(Until.hasObject(By.pkg(context.packageName).text("Incorrect PIN")), 10_000))
+            assertTrue(device.wait(Until.hasObject(By.pkg(context.packageName).text("Incorrect pin")), 10_000))
             assertTrue("Wrong PIN initiated uninstall", requests.isEmpty())
             enterPin(device, "246813")
             assertTrue(device.wait(Until.hasObject(By.pkg(context.packageName).text("Your locked apps")), 10_000))

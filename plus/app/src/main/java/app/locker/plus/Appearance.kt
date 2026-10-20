@@ -44,7 +44,8 @@ fun Context.shieldBackground() = lockerColors(this, app.config.state.value.appea
     val dark = appearance.isDark(isSystemInDarkTheme())
     val colors = lockerColors(LocalContext.current, appearance, dark)
     val radius = if (appearance.style == VisualStyle.ONE_UI) 28.dp else 24.dp
-    CompositionLocalProvider(LocalAppearance provides appearance, LocalCredentialHaptics provides haptics) {
+    CompositionLocalProvider(LocalAppearance provides appearance, LocalCredentialHaptics provides haptics,
+        LocalContentColor provides colors.onSurface) {
         MaterialTheme(colorScheme = colors, shapes = Shapes(small = RoundedCornerShape(16.dp),
             medium = RoundedCornerShape(radius), large = RoundedCornerShape(32.dp), extraLarge = RoundedCornerShape(36.dp)), content = content)
     }
@@ -80,7 +81,7 @@ fun Context.shieldBackground() = lockerColors(this, app.config.state.value.appea
             Text("Use wallpaper colors", Modifier.weight(1f))
             Switch(value.dynamic, { onChange(value.copy(dynamic = it)) })
         }
-        Card { Column(Modifier.fillMaxWidth().padding(20.dp)) {
+        Card { Column(Modifier.fillMaxWidth().padding(16.dp)) {
             Text("Your private space", style = MaterialTheme.typography.titleLarge)
             Text("Changes apply to the dashboard and lock screen.", style = MaterialTheme.typography.bodyMedium)
         } }

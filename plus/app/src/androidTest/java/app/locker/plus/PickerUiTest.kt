@@ -52,6 +52,27 @@ class PickerUiTest {
                 .windows.any { it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD }
             if (!keyboardVisible) android.os.SystemClock.sleep(50)
         }
+        if (keyboardVisible) {
+            fun stableSearchTop(): Int {
+                val end = android.os.SystemClock.elapsedRealtime() + 3_000
+                var previous = Int.MIN_VALUE; var repeats = 0
+                while (android.os.SystemClock.elapsedRealtime() < end) {
+                    val current = device.findObject(By.clazz("android.widget.EditText")).visibleBounds.top
+                    repeats = if (current == previous) repeats + 1 else 0
+                    previous = current
+                    if (repeats >= 3) return current
+                    android.os.SystemClock.sleep(50)
+                }
+                fail("Search layout never settled")
+                return previous
+            }
+            val top = stableSearchTop()
+            for (query in listOf("L", "Lo", "Locker", "", "Locker test fixture")) {
+                device.findObject(By.clazz("android.widget.EditText")).text = query
+                assertEquals("Search moved when suggestions/results changed", top, stableSearchTop())
+                assertTrue("Search lost keyboard focus", device.findObject(By.clazz("android.widget.EditText")).isFocused)
+            }
+        }
         if (keyboardVisible) device.pressBack()
         assertTrue("Picker closed while dismissing keyboard", device.wait(Until.hasObject(By.clazz("android.widget.EditText")), 2_000))
         val selector = By.desc("Lock Locker test fixture, app.locker.fixture.red")

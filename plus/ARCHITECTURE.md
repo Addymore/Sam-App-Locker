@@ -110,3 +110,11 @@ The opaque, full-screen accessibility overlay consumes touches. In 1.2, PIN and 
 New verifier records contain an authenticated format/version and credential-kind byte, salt and Argon2id hash inside AES-GCM encryption under the existing Android Keystore key. PIN v2 and legacy PBKDF records remain readable; metadata cannot reinterpret a v3 password or pattern as a PIN. UTF-8 input supports words, spaces and Unicode. All methods retain persistent rate limiting and input-array wiping. A credential change clears unlock sessions.
 
 The service binds a verified biometric launch before starting its Activity, because Samsung can omit the obscured target before onCreate. New foreground/challenge state still invalidates the host. Focus or enter-animation completion schedules an opaque frame commit before overlay removal. Finish callbacks also run if a replacement shield is removed first, avoiding a completed host remaining on screen.
+
+## 1.3 authentication presentation
+
+The configured credential is composed only after an explicit fallback selection or if biometrics are unavailable. A modal native prompt suppresses all app credential controls, keyboard focus and their accessibility semantics. Cancellation does not select a fallback; Other methods requests the overflow menu. Explicit selection consumes the once-per-visit automatic request so a delayed automatic launch does not interrupt credential entry.
+
+Each biometric Activity also carries a separate, in-memory launch attempt identity. The lock challenge still authorizes the app/session; the attempt identity rejects stop/error/success callbacks from an earlier retry for that same challenge. Credential verification rejects inactive/stale/uncertain challenges before invoking the KDF. Shield disposal marks its window detached before Compose focus cleanup, avoiding a password cleanup callback updating a removed window.
+
+Appearance preferences never change the lock engine's protected-app set or unlock sessions. Native shield and Compose use the same opaque base color. Decorative gradients are rendered above that base; no bitmap decoding or network access occurs in the shield path. Diagnostic exports contain operational events/capability summaries only.

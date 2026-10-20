@@ -249,26 +249,24 @@ class MainActivity : FragmentActivity() {
                 }
             } }) { padding ->
             Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.TopCenter) {
-                LazyColumn(Modifier.widthIn(max = 840.dp).fillMaxWidth(), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                LazyColumn(Modifier.widthIn(max = 840.dp).fillMaxWidth(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     item {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
-                                Text("YOUR PRIVATE SPACE", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                                Spacer(Modifier.height(6.dp))
-                                Text("Sam App Locker", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
+                                Text("Sam App Locker", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
                             }
                             Surface(shape = CircleShape, color = MaterialTheme.colorScheme.secondaryContainer) {
-                                PrivacyMark(Modifier.padding(12.dp).size(24.dp))
+                                PrivacyMark(Modifier.padding(8.dp).size(24.dp))
                             }
                         }
                     }
                     item {
                         Card(shape = RoundedCornerShape(32.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
-                            Row(Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.secondaryContainer.copy(alpha = .6f)))).padding(22.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                                Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = .65f)) { PrivacyMark(modifier = Modifier.padding(14.dp).size(28.dp)) }
+                            Row(Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.secondaryContainer.copy(alpha = .6f)))).padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = .65f)) { PrivacyMark(modifier = Modifier.padding(8.dp).size(24.dp)) }
                                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                     Text(status, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                                    Text("${selected.size} apps in your private space", style = MaterialTheme.typography.bodyMedium)
+                                    Text("${selected.size} locked apps", style = MaterialTheme.typography.bodySmall)
                                     Text(if (strongAvailable) "${app.vault.kind().label} + fingerprint" else app.vault.kind().label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     if (!active) TextButton(onClick = { tab = 2 }) { Text("Complete setup") }
                                 }
@@ -276,31 +274,29 @@ class MainActivity : FragmentActivity() {
                         }
                     }
                     if (tab != 2) {
-                        val suggested = rows.filter { it.pkg !in selected && suggestedCategory(it.pkg) != null }
-                        if (search.isBlank() && suggested.isNotEmpty() && (tab == 1 || selected.isEmpty())) item {
-                            LockerCard("A little more privacy") {
-                                Text("Suggested for you", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                                Text("Chats, messages, photos and notes often contain personal information. Choose what belongs in your private space.")
-                                suggested.take(8).forEach { row ->
-                                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        Image(row.icon.asImageBitmap(), null, Modifier.size(40.dp))
-                                        Column(Modifier.weight(1f)) {
-                                            Text(row.label, style = MaterialTheme.typography.titleSmall)
-                                            Text(suggestedCategory(row.pkg)!!, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                        FilledTonalButton(onClick = { if (authorized) app.config.toggle(row.pkg, true) }) { Text("Lock") }
-                                    }
-                                }
-                                Text("Suggestions only. Nothing is locked until you choose it.", style = MaterialTheme.typography.bodySmall)
-                            }
-                        }
-                        item {
-                            Text(if (tab == 0) "Your locked apps" else "Choose apps to lock", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                            Spacer(Modifier.height(12.dp))
+                        item(key = "app-search") {
+                            Text(if (tab == 0) "Your locked apps" else "Choose apps to lock", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                            Spacer(Modifier.height(8.dp))
                             OutlinedTextField(search, { search = it }, placeholder = { Text("Search name or package") }, label = { Text("Search apps") },
                                 shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth(), singleLine = true)
                             if (tab == 1) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
                                 AppFilter.entries.forEach { kind -> FilterChip(selected = filter == kind, onClick = { filter = kind }, label = { Text(kind.label) }) }
+                            }
+                        }
+                        val suggested = rows.filter { it.pkg !in selected && suggestedCategory(it.pkg) != null }
+                        if (search.isBlank() && suggested.isNotEmpty() && (tab == 1 || selected.isEmpty())) item(key = "suggestions") {
+                            var expanded by remember { mutableStateOf(false) }
+                            LockerCard("Suggested apps") {
+                                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    suggested.take(if (expanded) 8 else 4).forEach { row ->
+                                        AssistChip(onClick = { if (authorized) app.config.toggle(row.pkg, true) },
+                                            label = { Text("Lock ${row.label}") },
+                                            leadingIcon = { Image(row.icon.asImageBitmap(), null, Modifier.size(20.dp)) })
+                                    }
+                                }
+                                if (suggested.size > 4) TextButton(onClick = { expanded = !expanded }) {
+                                    Text(if (expanded) "Fewer suggestions" else "More suggestions")
+                                }
                             }
                         }
                         if (loadingApps && rows.isEmpty()) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
@@ -314,8 +310,8 @@ class MainActivity : FragmentActivity() {
                         items(filtered, key = { it.pkg }) { row ->
                             Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp),
                                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-                                Column {
-                                    Row(Modifier.fillMaxWidth().toggleable(value = row.pkg in selected, role = Role.Switch, onValueChange = { value ->
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Row(Modifier.weight(1f).toggleable(value = row.pkg in selected, role = Role.Switch, onValueChange = { value ->
                                         if (authorized) {
                                             app.config.toggle(row.pkg, value)
                                             scope.launch { snack.currentSnackbarData?.dismiss(); snack.showSnackbar(if (value) "${row.label} moved to Locked" else "${row.label} moved to Unlocked") }
@@ -324,16 +320,25 @@ class MainActivity : FragmentActivity() {
                                         contentDescription = "Lock ${row.label}, ${row.pkg}"
                                         stateDescription = if (row.pkg in selected) "Locked" else "Not locked"
                                         toggleableState = ToggleableState(row.pkg in selected); role = Role.Switch
-                                    }.padding(18.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                                        Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .4f)) { Image(row.icon.asImageBitmap(), null, Modifier.padding(8.dp).size(40.dp)) }
+                                    }.padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .4f)) { Image(row.icon.asImageBitmap(), null, Modifier.padding(6.dp).size(32.dp)) }
                                         Column(Modifier.weight(1f)) {
                                             Text(row.label, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                                             Text(if (row.system) "System app" else "Downloaded app", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                         Switch(checked = row.pkg in selected, onCheckedChange = null)
                                     }
-                                    if (tab == 0 && !row.system) TextButton(onClick = { pendingRemoval = row; error = ""; preferPin = false },
-                                        modifier = Modifier.align(Alignment.End).padding(end = 12.dp, bottom = 4.dp)) { Text("Uninstall…") }
+                                    if (tab == 0 && !row.system) Box {
+                                        var menuOpen by remember(row.pkg) { mutableStateOf(false) }
+                                        IconButton(onClick = { menuOpen = true }, modifier = Modifier.semantics {
+                                            contentDescription = "More actions for ${row.label}"
+                                        }) { Text("\u22ee", style = MaterialTheme.typography.headlineSmall) }
+                                        DropdownMenu(menuOpen, { menuOpen = false }) {
+                                            DropdownMenuItem(text = { Text("Uninstall\u2026") }, onClick = {
+                                                menuOpen = false; pendingRemoval = row; error = ""; preferPin = false
+                                            })
+                                        }
+                                    }
                                 }
                             }
                         }

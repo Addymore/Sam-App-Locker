@@ -28,18 +28,18 @@ import androidx.compose.ui.unit.dp
     }
     Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(32.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-        Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
             when (kind) {
                 CredentialKind.PIN -> {
                     Text(if (value.isEmpty()) "Enter PIN" else "●".repeat(value.length), style = MaterialTheme.typography.titleLarge,
-                        modifier = Modifier.padding(vertical = 12.dp).semantics { contentDescription = "PIN, ${value.length} digits entered" })
+                        modifier = Modifier.padding(vertical = 8.dp).semantics { contentDescription = "PIN, ${value.length} digits entered" })
                     listOf(listOf("1", "2", "3"), listOf("4", "5", "6"), listOf("7", "8", "9"), listOf("Clear", "0", "⌫")).forEach { row ->
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             row.forEach { digit -> TextButton(onClick = {
                                 touch()
                                 value = when (digit) { "Clear" -> ""; "⌫" -> value.dropLast(1); else -> (value + digit).take(12) }
                                 if (digit.length == 1 && shouldAutoSubmitPin(autoPinLength, value.length)) submit()
-                            }, enabled = enabled, modifier = Modifier.weight(1f).heightIn(min = 56.dp).semantics {
+                            }, enabled = enabled, modifier = Modifier.weight(1f).heightIn(min = 52.dp).semantics {
                                 contentDescription = if (digit == "⌫") "Delete last digit" else digit
                             }) { Text(digit, style = if (digit == "Clear") MaterialTheme.typography.labelLarge else MaterialTheme.typography.headlineSmall) } }
                         }

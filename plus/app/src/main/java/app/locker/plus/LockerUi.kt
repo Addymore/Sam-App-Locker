@@ -28,8 +28,8 @@ import androidx.compose.ui.unit.dp
 @Composable fun LockerCard(title: String, content: @Composable ColumnScope.() -> Unit) {
     Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(28.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-        Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             content()
         }
     }
@@ -96,8 +96,8 @@ import androidx.compose.ui.unit.dp
     if (biometricActive) { BiometricBackdrop(subtitle); return }
     LockerBackground {
         Box(Modifier.fillMaxSize().safeDrawingPadding(), contentAlignment = Alignment.Center) {
-            Column(Modifier.widthIn(max = 440.dp).fillMaxWidth().verticalScroll(rememberScrollState()).padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.widthIn(max = 440.dp).fillMaxWidth().verticalScroll(rememberScrollState()).padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("SAM APP LOCKER", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                     if (onBiometric != null && onKindChange == null) Box {
@@ -116,7 +116,7 @@ import androidx.compose.ui.unit.dp
                     }
                 }
                 Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.primaryContainer) {
-                    PrivacyMark(fingerprint = onBiometric != null, modifier = Modifier.padding(16.dp).size(40.dp))
+                    PrivacyMark(fingerprint = onBiometric != null, modifier = Modifier.padding(12.dp).size(32.dp))
                 }
                 Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
                 Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
@@ -137,7 +137,7 @@ import androidx.compose.ui.unit.dp
                     Button(onClick = {
                         selectedCredential = false; menuOpen = false; onPinVisibility(false)
                         Diagnostics.record("biometric_button_tapped"); action()
-                    }, enabled = enabled && !busy, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) {
+                    }, enabled = enabled && !busy, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
                         Text("Use fingerprint")
                     }
                 }
