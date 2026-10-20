@@ -59,9 +59,8 @@ class RemovalUiTest {
         }
     }
     private fun selectPin(device: UiDevice) {
-        val systemPin = device.wait(Until.findObject(By.text("Use PIN")), 5_000)
-        if (systemPin != null) systemPin.click()
-        else device.wait(Until.findObject(By.text("Use PIN instead")), 5_000)?.click()
+        device.wait(Until.findObject(By.text("Other methods")), 5_000)?.click()
+        device.wait(Until.findObject(By.pkg("app.sam.locker.testbed").text("Use PIN")), 5_000)?.click()
         assertNotNull(device.wait(Until.findObject(By.desc("Clear")), 10_000))
     }
     private fun enterPin(device: UiDevice, pin: String) {

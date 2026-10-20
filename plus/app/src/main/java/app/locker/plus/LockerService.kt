@@ -25,13 +25,14 @@ class LockerService : AccessibilityService() {
     private var biometricDismiss: (() -> Unit)? = null
     private var biometricHost: LockEngine.Challenge? = null
     private var biometricCover: LockEngine.Challenge? = null
+    private val hostAttempts = BiometricHostAttempts()
     private var confirmedProtectedWindow: String? = null
     private var snapshotProtected = emptySet<String>()
     private var systemPanelActive = false
     private val windowOwners = WindowOwnerCache()
     private var autoRequestQueued = false
     private val automaticBiometric = BiometricAttemptGate()
-    val biometricAvailable get() = android.os.Build.VERSION.SDK_INT >= 29 &&
+    val biometricAvailable get() = app.config.state.value.biometrics && android.os.Build.VERSION.SDK_INT >= 29 &&
         androidx.biometric.BiometricManager.from(this).canAuthenticate(androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG) == androidx.biometric.BiometricManager.BIOMETRIC_SUCCESS
     private val evidence = WindowEvidence()
     val homeObserved get() = evidence.foreground in homes
@@ -57,6 +58,7 @@ class LockerService : AccessibilityService() {
     private val recovery = setOf("com.android.settings", "com.android.phone", "com.samsung.android.dialer", "com.google.android.dialer", "com.samsung.android.incallui", "com.android.emergency")
     private val timer = Runnable { engine.tick(); render() }
     private val preferences = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (ready) shield.refreshAppearance()
         if (key == null || key in setOf("locked_apps", "rule", "seconds", "shared", "credential_epoch")) configure()
     }
     private val receiver = object : BroadcastReceiver() {
@@ -84,6 +86,10 @@ class LockerService : AccessibilityService() {
         if (!ready) return
         engine.configure(app.config.apps() - recovery - homes - keyboards - packageName - "com.android.systemui", app.config.rule(), app.config.seconds() * 1000L, app.config.shared())
         authenticating = null; render(); queueScan()
+    }
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (ready) { shield.refreshAppearance(); queueScan() }
     }
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (!ready || event == null) return
@@ -266,6 +272,7 @@ class LockerService : AccessibilityService() {
     }
     private fun render(received: Long = SystemClock.elapsedRealtime(), eventOrigin: Boolean = false) {
         if (!ready) return
+        shield.biometricActive.value = authenticating != null && authenticating == engine.challenge
         automaticBiometric.retainVisible(engine.visible)
         if (biometricDismiss != null && (biometricHost != authenticating || authenticating != engine.challenge ||
             evidence.foreground != authenticating?.packageName)) {
@@ -284,6 +291,9 @@ class LockerService : AccessibilityService() {
         engine.nextExpiry()?.let { handler.postDelayed(timer, (it - SystemClock.elapsedRealtime()).coerceAtLeast(1)) }
     }
     fun verifyPin(token: LockEngine.Challenge, pin: CharArray, result: (String) -> Unit) {
+        if (!ready || token != engine.challenge || authenticating != null || engine.uncertain || deviceUnavailable()) {
+            pin.fill('\u0000'); result("Authentication is no longer active."); return
+        }
         app.credentials.execute {
             val answer = app.vault.verify(pin)
             handler.post {
@@ -295,11 +305,17 @@ class LockerService : AccessibilityService() {
             }
         }
     }
+    fun chooseCredential(token: LockEngine.Challenge) {
+        if (token != engine.challenge || authenticating != null) return
+        automaticBiometric.take(token)
+        shield.pinFallback.value = true
+    }
     fun biometric(token: LockEngine.Challenge) {
         if (android.os.Build.VERSION.SDK_INT < 29) { shield.message.value = "Use PIN on this Android version."; return }
         if (token != engine.challenge) { Diagnostics.record("biometric_stale_action"); shield.message.value = "The app changed. Try fingerprint again."; return }
         if (engine.uncertain || deviceUnavailable() || systemPanelActive || pendingForeground != null || token.packageName !in snapshotProtected) return
         if (authenticating != null) { Diagnostics.record("biometric_already_requested"); return }
+        shield.pinFallback.value = false; shield.optionsRequest.value = 0; shield.biometricActive.value = true; shield.message.value = ""
         Diagnostics.record("biometric_action_received")
         automaticBiometric.take(token)
         evidence.adoptAuthenticationTarget(token.packageName, snapshotProtected)
@@ -307,12 +323,13 @@ class LockerService : AccessibilityService() {
         // Bind the verified launch before startActivity: accessibility can report
         // its obscuring transition even before the host's onCreate is dispatched.
         biometricHost = token
+        val attempt = hostAttempts.begin()
         try {
             // The auth-only task must not reuse a finishing singleTask host with an old token.
             // The overlay already covers the new challenge while the old auth task is cleared.
-            startActivity(Intent(this, BiometricActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION).putExtra("generation", token.generation).putExtra("package", token.packageName))
+            startActivity(Intent(this, BiometricActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION).putExtra("generation", token.generation).putExtra("package", token.packageName).putExtra("attempt", attempt))
             Diagnostics.record("biometric_launch_requested")
-        } catch (_: Exception) { authenticating = null; biometricHost = null; Diagnostics.record("biometric_launch_denied"); shield.message.value = "Biometric screen unavailable. Use ${app.vault.kind().label}." }
+        } catch (_: Exception) { authenticating = null; biometricHost = null; shield.biometricActive.value = false; Diagnostics.record("biometric_launch_denied"); shield.message.value = "Fingerprint could not open. Retry or use the three-dot menu." }
     }
     fun shieldReady(token: LockEngine.Challenge) {
         if (token != engine.challenge || engine.uncertain || deviceUnavailable() || systemPanelActive || authenticating != null) return
@@ -321,11 +338,11 @@ class LockerService : AccessibilityService() {
             biometric(token)
         }
     }
-    fun biometricHostStarted(token: LockEngine.Challenge, dismiss: () -> Unit): Boolean {
+    fun biometricHostStarted(token: LockEngine.Challenge, attempt: Long, dismiss: () -> Unit): Boolean {
         // Starting our opaque Activity can itself remove the obscured target from
         // Samsung's next snapshot. Bind the already verified launch before scanning;
         // a newer foreground event, panel or changed challenge still rejects it.
-        if (!isCurrent(token) || biometricHost != token || pendingForeground != null || systemPanelActive || evidence.foreground != token.packageName) { Diagnostics.record("biometric_host_target_gone"); return false }
+        if (!hostAttempts.matches(attempt) || !isCurrent(token) || biometricHost != token || pendingForeground != null || systemPanelActive || evidence.foreground != token.packageName) { Diagnostics.record("biometric_host_target_gone"); return false }
         scan(null)
         if (!isCurrent(token) || pendingForeground != null || systemPanelActive || evidence.foreground != token.packageName || deviceUnavailable()) {
             if (biometricHost == token) biometricHost = null
@@ -335,7 +352,8 @@ class LockerService : AccessibilityService() {
         biometricDismiss = dismiss
         return true
     }
-    fun biometricHostCommitted(token: LockEngine.Challenge): Boolean {
+    fun biometricHostCommitted(token: LockEngine.Challenge, attempt: Long): Boolean {
+        if (!hostAttempts.matches(attempt)) return false
         scan(null)
         if (pendingForeground != null) return false
         if (!isCurrent(token) || biometricHost != token || engine.uncertain || evidence.foreground != token.packageName || deviceUnavailable()) return false
@@ -346,14 +364,15 @@ class LockerService : AccessibilityService() {
         Diagnostics.record("shield_handoff_activity")
         return true
     }
-    fun biometricHostStopped(token: LockEngine.Challenge) {
-        if (biometricHost == token) {
+    fun biometricHostStopped(token: LockEngine.Challenge, attempt: Long) {
+        if (hostAttempts.matches(attempt) && biometricHost == token) {
             biometricDismiss = null
             biometricHost = null; biometricCover = null
             scan(null)
         }
     }
-    fun biometricResult(token: LockEngine.Challenge, success: Boolean, finishHost: () -> Unit) {
+    fun biometricResult(token: LockEngine.Challenge, attempt: Long, success: Boolean, finishHost: () -> Unit, options: Boolean = false, message: String = "") {
+        if (!hostAttempts.matches(attempt)) { finishHost(); return }
         if (authenticating != token) { finishAfterShield(finishHost); return }
         scan(null)
         if (authenticating != token) { finishAfterShield(finishHost); return }
@@ -361,8 +380,10 @@ class LockerService : AccessibilityService() {
         authenticating = null; biometricHost = null; biometricCover = null
         val accepted = engine.authenticate(token, success)
         Diagnostics.record(if (accepted) "biometric_accepted" else "biometric_rejected_or_stale")
-        shield.message.value = if (accepted) "Unlocked" else "Use ${app.vault.kind().label} or try fingerprint again"
-        shield.pinFallback.value = !accepted
+        shield.biometricActive.value = false
+        shield.message.value = if (accepted) "Unlocked" else message
+        shield.pinFallback.value = false
+        if (!accepted && options) shield.optionsRequest.value++
         render()
         finishAfterShield(finishHost)
     }

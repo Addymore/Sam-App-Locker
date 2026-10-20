@@ -18,6 +18,9 @@ import androidx.compose.ui.unit.dp
 
 @Composable fun CredentialInput(kind: CredentialKind, identity: Any?, enabled: Boolean,
     autoPinLength: Int, onSubmit: (CharArray) -> Unit) {
+    val view = androidx.compose.ui.platform.LocalView.current
+    val haptics = LocalCredentialHaptics.current
+    fun touch() { if (haptics) view.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP) }
     var value by remember(identity, kind) { mutableStateOf("") }
     fun submit() {
         val secret = value.toCharArray()
@@ -33,6 +36,7 @@ import androidx.compose.ui.unit.dp
                     listOf(listOf("1", "2", "3"), listOf("4", "5", "6"), listOf("7", "8", "9"), listOf("Clear", "0", "⌫")).forEach { row ->
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             row.forEach { digit -> TextButton(onClick = {
+                                touch()
                                 value = when (digit) { "Clear" -> ""; "⌫" -> value.dropLast(1); else -> (value + digit).take(12) }
                                 if (digit.length == 1 && shouldAutoSubmitPin(autoPinLength, value.length)) submit()
                             }, enabled = enabled, modifier = Modifier.weight(1f).heightIn(min = 56.dp).semantics {
@@ -50,7 +54,11 @@ import androidx.compose.ui.unit.dp
                     Text("Draw your pattern", style = MaterialTheme.typography.titleMedium)
                     val color = MaterialTheme.colorScheme.primary
                     val latestSubmit by rememberUpdatedState({ submit() })
-                    fun add(dot: Int) { value = appendPattern(value.map { it - '0' }, dot).joinToString("") }
+                    fun add(dot: Int) {
+                        val next = appendPattern(value.map { it - '0' }, dot).joinToString("")
+                        if (next != value) touch()
+                        value = next
+                    }
                     Box(Modifier.sizeIn(maxWidth = 288.dp, maxHeight = 288.dp).fillMaxWidth().aspectRatio(1f)
                         .pointerInput(enabled, identity) {
                             if (enabled) detectDragGestures(onDragStart = { point ->

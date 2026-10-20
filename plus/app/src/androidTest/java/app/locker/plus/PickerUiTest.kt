@@ -30,9 +30,8 @@ class PickerUiTest {
         // Observe the prompt/PIN action rather than the obscured Welcome back heading.
         // Management authentication is now fingerprint-first. The isolated test
         // uses only its own synthetic PIN and explicitly selects the fallback.
-        val pinOption = device.wait(Until.findObject(By.text("Use PIN")), 5_000)
-        if (pinOption != null) pinOption.click()
-        else device.wait(Until.findObject(By.pkg(context.packageName).text("Use PIN instead")), 5_000)?.click()
+        device.wait(Until.findObject(By.text("Other methods")), 5_000)?.click()
+        device.wait(Until.findObject(By.pkg(context.packageName).text("Use PIN")), 5_000)?.click()
         device.wait(Until.findObject(By.desc("Clear")), 15_000).click()
         for ((index, digit) in "246813".withIndex()) {
             device.wait(Until.findObject(By.desc(digit.toString())), 15_000).click()

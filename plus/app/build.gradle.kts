@@ -6,8 +6,8 @@ android {
         applicationId = "app.sam.locker"
         minSdk = 35
         targetSdk = 37
-        versionCode = 8
-        versionName = "1.2.0"
+        versionCode = 9
+        versionName = "1.3.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         manifestPlaceholders["appLabel"] = "Sam App Locker"
     }

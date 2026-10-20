@@ -29,6 +29,8 @@ class CredentialLifecycleTest {
         try {
             if (d.wait(Until.hasObject(By.pkg("com.samsung.android.biometrics.app.setting")), 5_000)) d.pressBack()
             assertTrue(d.wait(Until.hasObject(By.text("Welcome back")), 5_000))
+            d.findObject(By.desc("More unlock options")).click()
+            d.wait(Until.findObject(By.text("Use PIN")), 5_000).click()
             "246813".forEach { d.findObject(By.desc(it.toString())).click() }
             d.wait(Until.findObject(By.text("Settings")), 5_000).click()
             val change = "Change PIN, pattern or password"

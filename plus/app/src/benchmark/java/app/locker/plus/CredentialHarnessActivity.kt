@@ -13,7 +13,11 @@ class CredentialHarnessActivity : ComponentActivity() {
         check(packageName.endsWith(".testbed"))
         val kind = CredentialKind.valueOf(intent.getStringExtra("kind")!!)
         val expected = when (kind) { CredentialKind.PIN -> "246813"; CredentialKind.PATTERN -> "01258"; CredentialKind.PASSWORD -> "Kigali words 123!" }
-        setContent { LockerTheme(false) {
+        val appearance = Appearance(
+            savedEnum(intent.getStringExtra("style"), VisualStyle.MATERIAL),
+            savedEnum(intent.getStringExtra("mode"), ColorMode.SYSTEM),
+            savedEnum(intent.getStringExtra("backdrop"), Backdrop.PLAIN), false)
+        setContent { LockerTheme(appearance = appearance) {
             var accepted by remember { mutableStateOf(false) }
             if (accepted) Text("Synthetic credential accepted", Modifier.safeDrawingPadding())
             else AuthPanel("Synthetic test", "No private credentials", credentialKind = kind,

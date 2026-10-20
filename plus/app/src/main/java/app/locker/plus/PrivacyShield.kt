@@ -24,6 +24,8 @@ class PrivacyShield(private val service: LockerService) : LifecycleOwner, ViewMo
     private val uncertain = mutableStateOf(false)
     val message = mutableStateOf("")
     val pinFallback = mutableStateOf(false)
+    val biometricActive = mutableStateOf(false)
+    val optionsRequest = mutableStateOf(0)
     private val removalActions = mutableListOf<() -> Unit>()
     private var attached = false
     val isAttached get() = attached
@@ -51,31 +53,35 @@ class PrivacyShield(private val service: LockerService) : LifecycleOwner, ViewMo
     init {
         saved.performRestore(null); registry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
         frame.setViewTreeLifecycleOwner(this); frame.setViewTreeSavedStateRegistryOwner(this); frame.setViewTreeViewModelStoreOwner(this)
-        val dark = service.resources.configuration.uiMode and 0x30 == 0x20
-        val background = if (service.app.config.dynamic() && android.os.Build.VERSION.SDK_INT >= 31) {
-            (if (dark) androidx.compose.material3.dynamicDarkColorScheme(service) else androidx.compose.material3.dynamicLightColorScheme(service)).background.toArgb()
-        } else if (dark) 0xff11141c.toInt() else 0xfff4f6fc.toInt()
-        frame.setBackgroundColor(background)
+        refreshAppearance()
         compose = ComposeView(service).apply {
             // A WindowManager removal destroys the window's recomposer/input scope.
             // Never retain that composition across distinct overlay windows.
             setViewCompositionStrategy(androidx.compose.ui.platform.ViewCompositionStrategy.DisposeOnDetachedFromWindowOrReleasedFromPool)
-            setContent { LockerTheme(service.app.config.dynamic()) {
+            setContent { LockerTheme(appearance = service.app.config.state.value.appearance, haptics = service.app.config.state.value.haptics) {
                 val current = token.value
                 AuthPanel(title = if (uncertain.value) "Window cannot be verified" else "App is locked", subtitle = if (current == null) "Return home and open the app in full screen." else appLabel.value.ifEmpty { current.packageName },
                     error = message.value, enabled = current != null && !uncertain.value, identity = current,
-                    onPin = { pin, done -> current?.let { service.verifyPin(it, pin) { message.value = it; done() } } ?: done() },
-                    preferPin = pinFallback.value, credentialKind = service.app.vault.kind(),
+                    onPin = { pin, done -> current?.let { service.verifyPin(it, pin) { answer -> if (token.value == current) message.value = answer; done() } } ?: done() },
+                    preferPin = pinFallback.value, biometricActive = biometricActive.value, optionsRequest = optionsRequest.value, credentialKind = service.app.vault.kind(),
                     autoPinLength = if (service.app.config.state.value.autoPin) service.app.vault.pinLength() else 0,
+                    onCredentialSelected = { current?.let(service::chooseCredential) },
                     onBiometric = if (service.biometricAvailable) ({ current?.let(service::biometric) }) else null, onHome = service::home, onPinVisibility = ::setPinFocus)
             } }
+        }
+    }
+    fun refreshAppearance() {
+        frame.setBackgroundColor(service.shieldBackground().toArgb())
+        if (attached) (frame.layoutParams as? WindowManager.LayoutParams)?.let {
+            it.screenBrightness = if (service.app.config.state.value.bright) 1f else -1f
+            wm.updateViewLayout(frame, it)
         }
     }
     fun show(challenge: LockEngine.Challenge?, unknown: Boolean, received: Long, eventOrigin: Boolean = false) {
         val changed = token.value != challenge
         if (challenge != null && presentedPackage != challenge.packageName) {
             presentedPackage = challenge.packageName
-            message.value = ""; appLabel.value = ""; pinFallback.value = false
+            message.value = ""; appLabel.value = ""; pinFallback.value = false; biometricActive.value = false; optionsRequest.value = 0
             if (challenge != null) service.app.io.execute {
                 val label = runCatching { service.packageManager.getApplicationLabel(service.packageManager.getApplicationInfo(challenge.packageName, 0)).toString() }.getOrDefault(challenge.packageName)
                 android.os.Handler(service.mainLooper).post { if (token.value == challenge) appLabel.value = label }
@@ -86,11 +92,13 @@ class PrivacyShield(private val service: LockerService) : LifecycleOwner, ViewMo
             if (changed && challenge != null && !unknown) afterOpaqueFrame { service.shieldReady(challenge) }
             return
         }
+        refreshAppearance()
         receipt = received; measured = false; attachment++
         val params = WindowManager.LayoutParams(-1, -1, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or WindowManager.LayoutParams.FLAG_SECURE or WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED, PixelFormat.OPAQUE)
         params.setTitle("Sam App Locker privacy shield")
         params.windowAnimations = 0
+        params.screenBrightness = if (service.app.config.state.value.bright) 1f else -1f
         awaitingFirstFrame = android.os.Build.VERSION.SDK_INT >= 29
         try { wm.addView(frame, params); attached = true }
         catch (error: Exception) { awaitingFirstFrame = false; throw error }
@@ -118,7 +126,7 @@ class PrivacyShield(private val service: LockerService) : LifecycleOwner, ViewMo
             else params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
         if (flags != params.flags) { params.flags = flags; wm.updateViewLayout(frame, params) }
     }
-    fun clearSessionUi() { presentedPackage = null; pinFallback.value = false; message.value = "" }
+    fun clearSessionUi() { presentedPackage = null; pinFallback.value = false; biometricActive.value = false; optionsRequest.value = 0; message.value = "" }
     /** Never finish an opaque auth host until its replacement frame is submitted. */
     fun afterOpaqueFrame(finishOnRemoval: Boolean = false, action: () -> Unit) {
         if (!attached) return
@@ -140,7 +148,10 @@ class PrivacyShield(private val service: LockerService) : LifecycleOwner, ViewMo
         if (!attached) return
         val start = SystemClock.elapsedRealtime()
         registry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE); registry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
-        wm.removeViewImmediate(frame); attached = false; awaitingFirstFrame = false
+        // Disposing password composition clears focus. Mark detached first so
+        // that callback never tries to update a WindowManager view being removed.
+        attached = false; awaitingFirstFrame = false
+        wm.removeViewImmediate(frame)
         // Next attachment must submit the native opaque backing before rebuilding UI.
         frame.removeView(compose)
         compose.disposeComposition()

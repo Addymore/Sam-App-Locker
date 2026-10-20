@@ -54,11 +54,30 @@ class MainActivity : FragmentActivity() {
     private var preferPin by mutableStateOf(false)
     private var pendingRemoval by mutableStateOf<AppRow?>(null)
     private lateinit var biometricPrompt: BiometricPrompt
-    private var biometricPending = false
+    private var biometricPending by mutableStateOf(false)
+    private var optionsRequest by mutableIntStateOf(0)
     private var biometricEpoch = -1L
     private var biometricRemoval: AppRow? = null
-    private val strongAvailable get() = BiometricManager.from(this).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS
+    private val strongAvailable get() = app.config.state.value.biometrics && BiometricManager.from(this).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS
 
+    private var pendingExport: String? = null
+    private val exportDocument = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.CreateDocument("text/plain")) { uri ->
+        val data = pendingExport; pendingExport = null
+        if (uri != null && data != null) app.io.execute {
+            val result = runCatching { requireNotNull(contentResolver.openOutputStream(uri)).bufferedWriter().use { it.write(data) } }
+            runOnUiThread { android.widget.Toast.makeText(this, if (result.isSuccess) "Report saved" else "Could not save report", android.widget.Toast.LENGTH_SHORT).show() }
+        }
+    }
+    private fun exportReport(audit: Boolean) {
+        if (!authorized) return
+        pendingExport = if (audit) "Sam App Locker security report\nAndroid: ${android.os.Build.VERSION.RELEASE}\n" +
+            "Accessibility granted: ${accessibilityEnabled()}\nService connected: ${Health.connected.value}\n" +
+            "Protected apps: ${app.config.apps().size}\nRelock: ${app.config.rule()}\n" +
+            "Credential: ${app.vault.kind().label}\nBiometric available: $strongAvailable\n" +
+            "Ordinary app protection; external uninstall and initial-frame exposure remain possible.\n"
+        else Diagnostics.text()
+        exportDocument.launch(if (audit) "Sam-Locker-security-report.txt" else "Sam-Locker-diagnostics.txt")
+    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
@@ -73,13 +92,17 @@ class MainActivity : FragmentActivity() {
             }
             override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                 if (!biometricPending || biometricEpoch != lifecycleEpoch) return
-                biometricPending = false; preferPin = true
-                error = if (errorCode == BiometricPrompt.ERROR_NEGATIVE_BUTTON || errorCode == BiometricPrompt.ERROR_USER_CANCELED) "" else "Fingerprint unavailable. Use your app credential."
+                biometricPending = false; preferPin = false
+                if (errorCode == BiometricPrompt.ERROR_NEGATIVE_BUTTON) optionsRequest++
+                error = if (errorCode == BiometricPrompt.ERROR_NEGATIVE_BUTTON || errorCode == BiometricPrompt.ERROR_USER_CANCELED || errorCode == BiometricPrompt.ERROR_CANCELED) "" else "Fingerprint unavailable. Retry or use the three-dot menu."
             }
         })
         app.credentials.execute { val exists = app.vault.exists(); runOnUiThread { enrolled = exists; loaded = true } }
         setContent {
-            LockerTheme(app.config.state.value.dynamic) {
+            LockerTheme(appearance = app.config.state.value.appearance, haptics = app.config.state.value.haptics) {
+                SideEffect { window.attributes = window.attributes.apply {
+                    screenBrightness = if ((!authorized || pendingRemoval != null) && app.config.state.value.bright) 1f else -1f
+                } }
                 val removal = pendingRemoval
                 LaunchedEffect(loaded, enrolled, authorized, resumeEpoch, removal?.pkg) {
                     if (loaded && enrolled && (!authorized || removal != null) && !preferPin && strongAvailable) startBiometric()
@@ -88,7 +111,7 @@ class MainActivity : FragmentActivity() {
                 else if (removal != null && authorized) AuthPanel(
                     title = "Uninstall ${removal.label}?",
                     subtitle = "Authenticate to open Android’s uninstall confirmation. Removal outside Sam App Locker is controlled by Android.",
-                    identity = removal.pkg, error = error, preferPin = preferPin, credentialKind = app.vault.kind(),
+                    identity = removal.pkg, biometricActive = biometricPending, optionsRequest = optionsRequest, error = error, preferPin = preferPin, credentialKind = app.vault.kind(),
                     autoPinLength = if (app.config.state.value.autoPin) app.vault.pinLength() else 0,
                     onPin = { pin, done -> authenticateRemoval(removal, pin, done) },
                     onBiometric = if (strongAvailable) ({ startBiometric() }) else null,
@@ -99,7 +122,7 @@ class MainActivity : FragmentActivity() {
                     credentialKind = if (enrolled) app.vault.kind() else enrollmentKind,
                     onKindChange = if (!enrolled && !confirmation) ({ kind -> enrollmentKind = kind; error = "" }) else null,
                     identity = if (enrolled) "login" else if (confirmation) "confirm" else "enroll",
-                    error = error, preferPin = preferPin,
+                    error = error, preferPin = preferPin, biometricActive = biometricPending, optionsRequest = optionsRequest,
                     autoPinLength = if (enrolled && app.config.state.value.autoPin) app.vault.pinLength() else 0,
                     onPin = { pin, done -> authenticate(pin, done) },
                     onBiometric = if (enrolled && strongAvailable) ({ startBiometric() }) else null)
@@ -128,11 +151,11 @@ class MainActivity : FragmentActivity() {
     private fun startBiometric() {
         if (!lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) return
         if (!enrolled || biometricPending || isFinishing || !strongAvailable) { if (!strongAvailable) preferPin = true; return }
-        biometricPending = true; biometricEpoch = lifecycleEpoch; biometricRemoval = pendingRemoval
+        preferPin = false; optionsRequest = 0; error = ""; biometricPending = true; biometricEpoch = lifecycleEpoch; biometricRemoval = pendingRemoval
         biometricPrompt.authenticate(BiometricPrompt.PromptInfo.Builder()
             .setTitle(if (pendingRemoval == null) "Open Sam App Locker" else "Confirm app removal")
             .setSubtitle(pendingRemoval?.label ?: "Authenticate to manage your protected apps")
-            .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG).setNegativeButtonText("Use ${app.vault.kind().label}").build())
+            .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG).setNegativeButtonText("Other methods").build())
     }
     private fun authenticate(pin: CharArray, done: () -> Unit) {
         if (!loaded || !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
@@ -188,7 +211,7 @@ class MainActivity : FragmentActivity() {
     private fun invalidateManagement() {
         lifecycleEpoch++; biometricPending = false
         if (::biometricPrompt.isInitialized) biometricPrompt.cancelAuthentication()
-        authorized = false; pendingRemoval = null; preferPin = false
+        authorized = false; pendingRemoval = null; preferPin = false; optionsRequest = 0
         confirm?.fill('\u0000'); confirm = null; confirmation = false; error = ""
         // Never expose a stale enrollment form while the serialized credential
         // executor is still finishing work from the previous foreground session.
@@ -216,7 +239,7 @@ class MainActivity : FragmentActivity() {
         val snack = remember { SnackbarHostState() }
         val scope = rememberCoroutineScope()
         val filtered = rows.filter { appMatches(it.pkg, it.label, it.system, selected, tab == 0, filter, search) }
-        Scaffold(containerColor = MaterialTheme.colorScheme.background,
+        LockerBackground { Scaffold(containerColor = androidx.compose.ui.graphics.Color.Transparent,
             snackbarHost = { SnackbarHost(snack) },
             bottomBar = { NavigationBar {
                 listOf("Locked", "Unlocked", "Settings").forEachIndexed { index, label ->
@@ -325,7 +348,7 @@ class MainActivity : FragmentActivity() {
                     } }
                     item { LockerCard("Authentication") {
                         val strong = BiometricManager.from(this@MainActivity).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)
-                        Text(if (strong == BiometricManager.BIOMETRIC_SUCCESS) "Strong biometric available. Fingerprint opens first; your chosen fallback stays ready underneath." else "Strong biometric unavailable or not enrolled. Use your chosen app credential.")
+                        Text(if (strong == BiometricManager.BIOMETRIC_SUCCESS) "Strong biometric available. Fingerprint opens first; other methods are hidden in the three-dot menu." else "Strong biometric unavailable or not enrolled. Use your chosen app credential.")
                         Text("Face unlock is offered only if Android exposes it as a strong biometric. Many Samsung face configurations do not qualify.")
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
@@ -359,12 +382,29 @@ class MainActivity : FragmentActivity() {
                         Button(onClick = { launchSettings(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) }) { Text("Open app settings") }
                         Text("Force-stop, safe mode, permission revocation, and uninstall interrupt protection. Only you can enable the accessibility service again.")
                     } }
-                    item { LockerCard("Appearance & diagnostics") {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Switch(checked = settings.dynamic, onCheckedChange = { if (authorized) app.config.prefs.edit().putBoolean("dynamic", it).apply() })
-                            Text("Dynamic colors", Modifier.padding(start = 12.dp))
+                    item { AppearancePicker(settings.appearance) { if (authorized) app.config.setAppearance(it) } }
+                    item { LockerCard("Comfort & feedback") {
+                        listOf(Triple("biometrics", "Use fingerprint first", settings.biometrics),
+                            Triple("haptics", "Touch feedback", settings.haptics),
+                            Triple("bright", "Brighter authentication screen", settings.bright)).forEach { (key, label, checked) ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(label, Modifier.weight(1f))
+                                Switch(checked, { if (authorized) app.config.prefs.edit().putBoolean(key, it).apply() })
+                            }
                         }
-                        Text("Light and dark themes follow your phone. Diagnostic timings measure draw submission, not actual display presentation.")
+                        Text("Brightness changes only the lock window, not your phone's saved brightness.", style = MaterialTheme.typography.bodySmall)
+                    } }
+                    item { LockerCard("Diagnostics") {
+                        Text("Local operational events only; no screen text or credentials. Timings are frame submission, not physical presentation.")
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Record local diagnostics", Modifier.weight(1f))
+                            Switch(settings.logging, { if (authorized) app.config.prefs.edit().putBoolean("logging", it).apply() })
+                        }
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(onClick = { exportReport(false) }) { Text("Export diagnostics") }
+                            TextButton(onClick = { exportReport(true) }) { Text("Export security report") }
+                            TextButton(onClick = { if (authorized) Diagnostics.clear() }) { Text("Clear log") }
+                        }
                         TextButton(onClick = { showLog = !showLog }) { Text(if (showLog) "Hide diagnostics" else "View local diagnostics") }
                         if (showLog) Text(Diagnostics.text(), style = MaterialTheme.typography.bodySmall)
                         Text("Notifications, widgets, Recents thumbnails and external displays are separate exposure surfaces. This app does not secure them.")
@@ -381,6 +421,7 @@ class MainActivity : FragmentActivity() {
                     }
                 }
             }
+        }
         }
     }
 }

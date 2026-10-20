@@ -25,18 +25,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
-@Composable fun LockerTheme(dynamic: Boolean = true, content: @Composable () -> Unit) {
-    val dark = isSystemInDarkTheme()
-    val colors = if (dynamic && Build.VERSION.SDK_INT >= 31) {
-        if (dark) dynamicDarkColorScheme(LocalContext.current) else dynamicLightColorScheme(LocalContext.current)
-    } else if (dark) darkColorScheme(primary = Color(0xFFADC6EB), secondary = Color(0xFFB6D4CC), background = Color(0xFF11141C),
-        surface = Color(0xFF191D28), surfaceContainer = Color(0xFF202532))
-    else lightColorScheme(primary = Color(0xFF45658C), secondary = Color(0xFF486B62), background = Color(0xFFF4F6FC),
-        surface = Color.White, surfaceContainer = Color.White, primaryContainer = Color(0xFFE0EAF7))
-    MaterialTheme(colorScheme = colors, shapes = Shapes(small = RoundedCornerShape(16.dp),
-        medium = RoundedCornerShape(24.dp), large = RoundedCornerShape(32.dp), extraLarge = RoundedCornerShape(36.dp)), content = content)
-}
-
 @Composable fun LockerCard(title: String, content: @Composable ColumnScope.() -> Unit) {
     Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(28.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
@@ -77,7 +65,7 @@ import androidx.compose.ui.unit.dp
 }
 
 @Composable fun BiometricBackdrop(appName: String = "Your app") {
-    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+    LockerBackground {
         Column(Modifier.fillMaxSize().safeDrawingPadding().padding(32.dp),
             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             PrivacyMark(fingerprint = true, modifier = Modifier.size(80.dp))
@@ -91,18 +79,42 @@ import androidx.compose.ui.unit.dp
 
 @Composable fun AuthPanel(title: String, subtitle: String, error: String = "", enabled: Boolean = true,
     identity: Any? = title, preferPin: Boolean = false, autoPinLength: Int = 0,
+    biometricActive: Boolean = false, optionsRequest: Int = 0,
     credentialKind: CredentialKind = CredentialKind.PIN, onKindChange: ((CredentialKind) -> Unit)? = null,
     onPin: (CharArray, () -> Unit) -> Unit, onBiometric: (() -> Unit)? = null,
-    onHome: (() -> Unit)? = null, exitLabel: String = "Return home", onPinVisibility: (Boolean) -> Unit = {}) {
+    onCredentialSelected: () -> Unit = {}, onHome: (() -> Unit)? = null, exitLabel: String = "Return home", onPinVisibility: (Boolean) -> Unit = {}) {
     var busy by remember(identity, credentialKind) { mutableStateOf(false) }
+    var selectedCredential by remember(identity) { mutableStateOf(preferPin) }
+    var menuOpen by remember(identity) { mutableStateOf(false) }
+    val showCredential = credentialVisible(onBiometric != null, selectedCredential, biometricActive)
+    LaunchedEffect(preferPin) { if (preferPin) selectedCredential = true }
+    LaunchedEffect(optionsRequest) { if (optionsRequest > 0) menuOpen = true }
     // Touch-only credentials do not need window focus. Taking it can hide the
     // underlying application's window from Samsung's accessibility snapshot.
-    LaunchedEffect(credentialKind) { onPinVisibility(credentialKind == CredentialKind.PASSWORD) }
-    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+    LaunchedEffect(showCredential, credentialKind) { onPinVisibility(showCredential && credentialKind == CredentialKind.PASSWORD) }
+    DisposableEffect(Unit) { onDispose { onPinVisibility(false) } }
+    if (biometricActive) { BiometricBackdrop(subtitle); return }
+    LockerBackground {
         Box(Modifier.fillMaxSize().safeDrawingPadding(), contentAlignment = Alignment.Center) {
             Column(Modifier.widthIn(max = 440.dp).fillMaxWidth().verticalScroll(rememberScrollState()).padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("SAM APP LOCKER", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("SAM APP LOCKER", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                    if (onBiometric != null && onKindChange == null) Box {
+                        IconButton(onClick = { menuOpen = true }, enabled = !busy,
+                            modifier = Modifier.semantics { contentDescription = "More unlock options" }) {
+                            Text("⋮", style = MaterialTheme.typography.headlineMedium)
+                        }
+                        DropdownMenu(menuOpen, { menuOpen = false }) {
+                            DropdownMenuItem(text = { Text("Use ${credentialKind.label}") }, onClick = {
+                                menuOpen = false; selectedCredential = true; onCredentialSelected()
+                            })
+                            if (showCredential) DropdownMenuItem(text = { Text("Use fingerprint") }, onClick = {
+                                menuOpen = false; selectedCredential = false; onPinVisibility(false); onBiometric()
+                            })
+                        }
+                    }
+                }
                 Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.primaryContainer) {
                     PrivacyMark(fingerprint = onBiometric != null, modifier = Modifier.padding(16.dp).size(40.dp))
                 }
@@ -117,12 +129,18 @@ import androidx.compose.ui.unit.dp
                 if (error.isNotEmpty()) Text(error, color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center,
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
                 if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-                // Never strand the user on a method chooser if the system prompt is delayed.
-                CredentialInput(credentialKind, identity, enabled && !busy, autoPinLength) { value ->
+                // Hidden inputs are removed from composition, including keyboard and semantics.
+                if (showCredential) CredentialInput(credentialKind, identity, enabled && !busy, autoPinLength) { value ->
                     if (!busy && enabled) { busy = true; onPin(value) { busy = false } } else value.fill('\u0000')
                 }
-                onBiometric?.let { action -> TextButton(onClick = { Diagnostics.record("biometric_button_tapped"); action() },
-                    enabled = enabled && !busy, modifier = Modifier.heightIn(min = 48.dp)) { Text("Use fingerprint") } }
+                onBiometric?.let { action ->
+                    Button(onClick = {
+                        selectedCredential = false; menuOpen = false; onPinVisibility(false)
+                        Diagnostics.record("biometric_button_tapped"); action()
+                    }, enabled = enabled && !busy, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) {
+                        Text("Use fingerprint")
+                    }
+                }
                 onHome?.let { TextButton(onClick = it, modifier = Modifier.heightIn(min = 48.dp)) { Text(exitLabel) } }
             }
         }

@@ -9,21 +9,30 @@ import org.junit.Test
 import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class CredentialInputUiTest {
-    @Test fun fallbackIsImmediatelyUsableForEveryMethod() {
+    @Test fun fallbackIsHiddenUntilSelectedForEveryMethod() {
         val i = InstrumentationRegistry.getInstrumentation(); val context = i.targetContext
         check(context.packageName.endsWith(".testbed"))
         Configurator.getInstance().uiAutomationFlags = android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES
         val d = UiDevice.getInstance(i)
         for (kind in listOf("PIN", "PASSWORD", "PATTERN")) {
             val activity = i.startActivitySync(Intent().setClassName(context.packageName, "app.locker.plus.CredentialHarnessActivity")
-                .putExtra("kind", kind).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                .putExtra("kind", kind)
+                .putExtra("style", when(kind) { "PIN" -> "ONE_UI"; "PASSWORD" -> "COLOR_OS"; else -> "MATERIAL" })
+                .putExtra("mode", if(kind == "PASSWORD") "DARK" else "LIGHT")
+                .putExtra("backdrop", when(kind) { "PIN" -> "OCEAN"; "PASSWORD" -> "AURORA"; else -> "SUNSET" })
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             try {
                 assertTrue(d.wait(Until.hasObject(By.text("Synthetic test")), 10_000))
+                assertFalse("PIN exists behind fingerprint", d.hasObject(By.desc("Clear")))
+                assertFalse("Password exists behind fingerprint", d.hasObject(By.clazz("android.widget.EditText")))
+                assertFalse("Pattern exists behind fingerprint", d.hasObject(By.desc("Pattern dot 1")))
+                d.findObject(By.desc("More unlock options")).click()
+                d.wait(Until.findObject(By.text("Use " + when(kind) { "PASSWORD" -> "Password"; "PATTERN" -> "Pattern"; else -> "PIN" })), 5_000).click()
                 // This harness contains only fixed synthetic data, never owner input.
                 d.takeScreenshot(java.io.File(context.filesDir, "credential-${kind.lowercase()}.png"))
                 when (kind) {
                     "PIN" -> {
-                        assertNotNull("PIN must be visible without a chooser tap", d.findObject(By.desc("Clear")))
+                        assertNotNull("PIN must appear after explicit selection", d.findObject(By.desc("Clear")))
                         "246813".forEach { d.findObject(By.desc(it.toString())).click() }
                     }
                     "PASSWORD" -> {

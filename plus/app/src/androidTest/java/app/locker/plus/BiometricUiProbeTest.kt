@@ -66,9 +66,31 @@ class BiometricUiProbeTest {
             if (!promptVisible) android.os.SystemClock.sleep(50)
         }
         assertTrue("Samsung biometric window did not appear", promptVisible)
+        assertFalse("Credential keypad present while fingerprint is active", device.hasObject(By.pkg(lockerPackage).desc("Clear")))
         device.pressBack()
         assertTrue("Shield disappeared after cancellation", device.wait(Until.hasObject(By.pkg(lockerPackage).text("App is locked")), 10_000))
-        assertTrue("PIN fallback missing after cancellation", device.wait(Until.hasObject(By.pkg(lockerPackage).desc("Clear")), 10_000))
+        assertFalse("Cancellation must not reveal the PIN", device.hasObject(By.pkg(lockerPackage).desc("Clear")))
+        if (cycle % 10 == 0) {
+            device.findObject(By.pkg(lockerPackage).text("Use fingerprint")).click()
+            val retryDeadline = android.os.SystemClock.elapsedRealtime() + 10_000
+            var retryVisible = false
+            while (!retryVisible && android.os.SystemClock.elapsedRealtime() < retryDeadline) {
+                retryVisible = instrumentation.getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES).windows.any { w ->
+                    val r = w.root
+                    val visible = r?.packageName?.toString() == "com.samsung.android.biometrics.app.setting" && (w.isActive || w.isFocused)
+                    @Suppress("DEPRECATION") r?.recycle()
+                    visible
+                }
+                if (!retryVisible) android.os.SystemClock.sleep(50)
+            }
+            assertTrue("Fingerprint retry failed", retryVisible)
+            assertFalse(device.hasObject(By.pkg(lockerPackage).desc("Clear")))
+            device.pressBack()
+            assertTrue(device.wait(Until.hasObject(By.pkg(lockerPackage).text("App is locked")), 5_000))
+        }
+        device.wait(Until.findObject(By.pkg(lockerPackage).desc("More unlock options")), 5_000).click()
+        device.wait(Until.findObject(By.pkg(lockerPackage).text("Use PIN")), 5_000).click()
+        assertTrue("Explicit PIN fallback missing", device.wait(Until.hasObject(By.pkg(lockerPackage).desc("Clear")), 5_000))
         val finishDeadline = android.os.SystemClock.elapsedRealtime() + 5_000
         var hostPresent = true
         while (hostPresent && android.os.SystemClock.elapsedRealtime() < finishDeadline) {
