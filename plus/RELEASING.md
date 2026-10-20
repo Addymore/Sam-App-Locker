@@ -1,6 +1,6 @@
 # Build and sign a release
 
-Current source is 1.2.0 / versionCode 8. Release uses `app.sam.locker`; debug uses `app.sam.locker.debug`. The release certificate is unchanged. Do not replace public APKs under an existing tag; publish each update under its own versioned tag. The 1.0 examples below are historical; use 1.2.0 filenames for this source.
+Current source is 1.3.0 / versionCode 9. Release uses `app.sam.locker`; debug uses `app.sam.locker.debug`. The release certificate is unchanged. Do not replace public APKs under an existing tag; publish each update under its own versioned tag. The 1.0 examples below are historical; use 1.3.0 filenames for this source.
 
 Version 1.0.0 uses versionCode 2, following preview versionCode 1. Release application ID: `app.locker.plus.release`. Debug application ID: `app.locker.plus`, retained for in-place preview upgrades. Their authentication task affinities follow the application ID. Android does not transfer the Keystore-protected PIN between installations; configure the release separately and disable the previous protection service when switching.
 

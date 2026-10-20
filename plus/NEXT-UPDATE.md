@@ -1,6 +1,6 @@
 # Next update: remaining work
 
-Status for 1.2.0, 2026-10-18. See RELEASE-1.2-VERIFICATION.md for the exact tested APKs. This release does not claim flawless or native enforcement.
+Status for 1.3.0, 2026-10-20. See RELEASE-1.3-VERIFICATION.md for the exact tested APKs. This release does not claim flawless or native enforcement.
 
 - [ ] **P1: Initial protected-content exposure.** Investigate the 194 ms direct-event outlier and initial recorded exposure up to 177.656 ms. Profile cold starts and actual presentation with an external high-speed camera. Android can display content before accessibility reports it; public permissions or ADB grants cannot guarantee zero exposure.
 - [x] **Reproduced rapid-switch regression, tested scope.** The 1.2 locking engine passed 100 protected-to-public rapid switches on the A57 after correcting host invalidation and touch-keypad focus. Earlier 1.1 and 1.2-development failures are preserved as evidence. This closes the tested PIN/full-screen reproduction, not every possible stuck-screen path.
@@ -13,6 +13,10 @@ Status for 1.2.0, 2026-10-18. See RELEASE-1.2-VERIFICATION.md for the exact test
 - [ ] **P1: Broader shade/Quick Settings validation.** The 1.1 investigation passed 100 authenticated-fixture shade cycles on the A57; 1.2 passed 100 Home/public shade cycles. Repeat real touch gestures after device unlock, over an authenticated protected app, with the credential keyboard shown, notifications launching apps, screen rotation, timeouts and additional One UI builds. Preserve fail-closed handling for still-live unknown windows.
 - [ ] **P1: Authentication handoff flashes.** One successful-authentication log in this investigation showed a brief replacement shield during the return to the app. Measure the final presentation frame by frame and fix without uncovering protected content.
 - [ ] **P2: Android 15/16 physical coverage.** Minimum API 35 is enforced, but the Android 17 refresh path is unavailable on these versions; verify the conservative fallback on real devices.
+
+## 1.3 regression scope
+
+Fingerprint-first presentation, explicit overflow fallback, per-attempt stale callback rejection, compact app selection/search and dark-theme contrast are implemented. Synthetic credential inputs, search/toggles and in-app removal confirmation have passing Samsung checks; see the release verification for repeated-loop results. These do not close the broader rotation, password-IME, multiwindow or long-idle items above.
 
 ## Platform boundaries, not promised fixes
 
