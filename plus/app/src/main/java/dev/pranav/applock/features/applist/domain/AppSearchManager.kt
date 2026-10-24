@@ -13,22 +13,14 @@ class AppSearchManager(private val context: Context) {
     private var appNameCache: HashMap<ApplicationInfo, String> = HashMap()
     private var prefixIndexCache: HashMap<String, List<ApplicationInfo>> = HashMap()
 
-    suspend fun loadApps(includeSystemApps: Boolean = false): Set<ApplicationInfo> {
+    suspend fun loadApps(): Set<ApplicationInfo> {
         return withContext(Dispatchers.IO) {
             val launcherApps =
                 context.getSystemService(Context.LAUNCHER_APPS_SERVICE) as LauncherApps
 
-            val apps = if (includeSystemApps) {
-                // Load all apps including system apps
-                val pm = context.packageManager
-                pm.getInstalledApplications(0)
-                    .filter { it.packageName != context.packageName }
-            } else {
-                // Load only user-installed apps with launcher activities
-                launcherApps.getActivityList(null, Process.myUserHandle())
-                    .mapNotNull { it.applicationInfo }
-                    .filter { it.enabled && it.packageName != context.packageName }
-            }
+            val apps = launcherApps.getActivityList(null, Process.myUserHandle())
+                .mapNotNull { it.applicationInfo }
+                .filter { it.enabled && it.packageName != context.packageName }
 
             val nameCache =
                 apps.associateWithTo(HashMap()) { app ->

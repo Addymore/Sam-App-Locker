@@ -21,16 +21,19 @@ class CredentialLifecycleTest {
         Configurator.getInstance().uiAutomationFlags = UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES
         Configurator.getInstance().waitForIdleTimeout = 100
         val d = UiDevice.getInstance(i)
+        d.wakeUp()
         val app = context.app
+        app.config.prefs.edit().putBoolean("auto_pin", true).commit()
         app.credentials.submit { app.vault.enroll("246813".toCharArray()) }.get(10, TimeUnit.SECONDS)
         val intent = Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         val activity = i.startActivitySync(intent)
         val release = CountDownLatch(1)
         try {
-            if (d.wait(Until.hasObject(By.pkg("com.samsung.android.biometrics.app.setting")), 5_000)) d.pressBack()
-            assertTrue(d.wait(Until.hasObject(By.text("Welcome back")), 5_000))
-            d.findObject(By.desc("More unlock options")).click()
-            d.wait(Until.findObject(By.text("Use PIN")), 5_000).click()
+            val other = d.wait(Until.findObject(By.text("Other methods")), 5_000)
+            if (other != null) other.click()
+            else d.wait(Until.findObject(By.desc("More unlock options")), 5_000).click()
+            d.wait(Until.findObject(By.pkg(context.packageName).text("Use PIN")), 5_000).click()
+            assertNotNull(d.wait(Until.findObject(By.desc("Clear")), 10_000))
             "246813".forEach { d.findObject(By.desc(it.toString())).click() }
             d.wait(Until.findObject(By.text("Settings")), 5_000).click()
             val change = "Change PIN, pattern or password"

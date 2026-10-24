@@ -7,9 +7,6 @@ import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
-import androidx.compose.material3.*
-import androidx.compose.foundation.layout.*
-import androidx.compose.ui.Modifier
 import androidx.compose.runtime.*
 
 class BiometricActivity : FragmentActivity() {
@@ -49,7 +46,6 @@ class BiometricActivity : FragmentActivity() {
             override fun onAuthenticationFailed() { Diagnostics.record("biometric_no_match") }
         })
         if (BiometricManager.from(this).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) != BiometricManager.BIOMETRIC_SUCCESS) { complete(false); return }
-        if (android.os.Build.VERSION.SDK_INT < 29) { complete(false); return }
         restoringPrompt = savedInstanceState != null
     }
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -65,7 +61,6 @@ class BiometricActivity : FragmentActivity() {
         handoffWhenReady()
     }
     private fun handoffWhenReady() {
-        if (android.os.Build.VERSION.SDK_INT < 29) return
         if (!entryComplete || handoffScheduled || completed || !::prompt.isInitialized) return
         handoffScheduled = true
         window.decorView.viewTreeObserver.registerFrameCommitCallback {
@@ -99,10 +94,12 @@ class BiometricActivity : FragmentActivity() {
     override fun onStop() {
         super.onStop()
         Diagnostics.record("biometric_activity_stopped")
-        if (::token.isInitialized) LockerService.instance?.biometricHostStopped(token, attempt)
-        if (!isChangingConfigurations && !completed && ::token.isInitialized) { if (::prompt.isInitialized) prompt.cancelAuthentication(); complete(false) }
-        // Home/app switching may remove the replacement overlay before its callback.
-        // A completed background host must not remain for singleTask reuse.
-        if (!isChangingConfigurations && completed && !isFinishing) finish()
+        if (!isChangingConfigurations) {
+            if (::token.isInitialized) LockerService.instance?.biometricHostStopped(token, attempt)
+            if (!completed && ::token.isInitialized) { if (::prompt.isInitialized) prompt.cancelAuthentication(); complete(false) }
+            // Home/app switching may remove the replacement overlay before its callback.
+            // A completed background host must not remain for singleTask reuse.
+            if (completed && !isFinishing) finish()
+        }
     }
 }

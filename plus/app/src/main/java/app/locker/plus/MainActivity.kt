@@ -4,7 +4,6 @@ import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.graphics.Bitmap
-import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import android.view.WindowManager
@@ -13,24 +12,26 @@ import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import androidx.core.graphics.drawable.toBitmap
+import androidx.core.net.toUri
 import androidx.fragment.app.FragmentActivity
 import dev.pranav.applock.features.applist.domain.AppSearchManager
 import kotlinx.coroutines.launch
@@ -40,6 +41,7 @@ class MainActivity : FragmentActivity() {
     private var authorized by mutableStateOf(false)
     private var loaded by mutableStateOf(false)
     private var enrolled by mutableStateOf(false)
+    private var changingCredential by mutableStateOf(false)
     private var error by mutableStateOf("")
     private var confirm: CharArray? = null
     private var enrollmentKind by mutableStateOf(CredentialKind.PIN)
@@ -52,6 +54,7 @@ class MainActivity : FragmentActivity() {
     private var lifecycleEpoch = 0L
     private var resumeEpoch by mutableIntStateOf(0)
     private var preferPin by mutableStateOf(false)
+    private var biometricAutoLaunched by mutableStateOf(false)
     private var pendingRemoval by mutableStateOf<AppRow?>(null)
     private lateinit var biometricPrompt: BiometricPrompt
     private var biometricPending by mutableStateOf(false)
@@ -105,7 +108,10 @@ class MainActivity : FragmentActivity() {
                 } }
                 val removal = pendingRemoval
                 LaunchedEffect(loaded, enrolled, authorized, resumeEpoch, removal?.pkg) {
-                    if (loaded && enrolled && (!authorized || removal != null) && !preferPin && strongAvailable) startBiometric()
+                    if (loaded && enrolled && (!authorized || removal != null) && !preferPin && !biometricAutoLaunched && strongAvailable) {
+                        biometricAutoLaunched = true
+                        startBiometric()
+                    }
                 }
                 if (!loaded) Surface(Modifier.fillMaxSize()) { Box(contentAlignment = Alignment.Center) { CircularProgressIndicator() } }
                 else if (removal != null && authorized) AuthPanel(
@@ -114,8 +120,9 @@ class MainActivity : FragmentActivity() {
                     identity = removal.pkg, biometricActive = biometricPending, optionsRequest = optionsRequest, error = error, preferPin = preferPin, credentialKind = app.vault.kind(),
                     autoPinLength = if (app.config.state.value.autoPin) app.vault.pinLength() else 0,
                     onPin = { pin, done -> authenticateRemoval(removal, pin, done) },
+                    onCredentialSelected = { preferPin = true },
                     onBiometric = if (strongAvailable) ({ startBiometric() }) else null,
-                    onHome = { pendingRemoval = null; error = ""; preferPin = false }, exitLabel = "Keep app")
+                    onHome = { pendingRemoval = null; error = ""; preferPin = false; biometricAutoLaunched = false }, exitLabel = "Keep app")
                 else if (!authorized) AuthPanel(
                     title = if (enrolled) "Welcome back" else if (confirmation) "Confirm your ${enrollmentKind.label.lowercase()}" else "Choose your app lock",
                     subtitle = if (enrolled) "Your apps. Your privacy." else enrollmentKind.hint,
@@ -125,7 +132,13 @@ class MainActivity : FragmentActivity() {
                     error = error, preferPin = preferPin, biometricActive = biometricPending, optionsRequest = optionsRequest,
                     autoPinLength = if (enrolled && app.config.state.value.autoPin) app.vault.pinLength() else 0,
                     onPin = { pin, done -> authenticate(pin, done) },
-                    onBiometric = if (enrolled && strongAvailable) ({ startBiometric() }) else null)
+                    onCredentialSelected = { preferPin = true },
+                    onBiometric = if (enrolled && strongAvailable) ({ startBiometric() }) else null,
+                    onHome = if (changingCredential) ({
+                        changingCredential = false; confirm?.fill('\u0000'); confirm = null; confirmation = false; error = ""
+                        enrolled = true; authorized = true
+                    }) else null,
+                    exitLabel = "Cancel")
                 else Dashboard()
             }
         }
@@ -172,8 +185,8 @@ class MainActivity : FragmentActivity() {
                 runOnUiThread {
                     // A completed credential change must revoke app sessions even
                     // if the owner backgrounds this Activity while the KDF runs.
-                    if (success) app.config.prefs.edit().putLong("credential_epoch", System.nanoTime()).apply()
-                    if (epoch == lifecycleEpoch) { enrolled = success; authorized = success; confirmation = false; error = if (success) "" else "Could not save credential securely" }
+                    if (success) app.config.prefs.edit { putLong("credential_epoch", System.nanoTime()) }
+                    if (epoch == lifecycleEpoch) { changingCredential = false; enrolled = success; authorized = success; confirmation = false; error = if (success) "" else "Could not save credential securely" }
                     done()
                 }
             }
@@ -195,9 +208,9 @@ class MainActivity : FragmentActivity() {
         }
     }
     private fun launchRemoval(row: AppRow) {
-        pendingRemoval = null; error = ""; preferPin = false
+        pendingRemoval = null; error = ""; preferPin = false; biometricAutoLaunched = false
         // Android owns the final confirmation. No device-owner/admin privileges.
-        runCatching { startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:${row.pkg}"))) }
+        runCatching { startActivity(Intent(Intent.ACTION_DELETE, "package:${row.pkg}".toUri())) }
             .onFailure { error = "Android could not open uninstall. Use the phone’s app settings." }
     }
     override fun onResume() { super.onResume(); accessibilityGranted = accessibilityEnabled(); resumeEpoch++; refreshApps() }
@@ -207,11 +220,11 @@ class MainActivity : FragmentActivity() {
         // authenticated credential-change form across that pause boundary.
         if (!enrolled && loaded) invalidateManagement()
     }
-    override fun onStop() { super.onStop(); invalidateManagement() }
+    override fun onStop() { super.onStop(); if (!isChangingConfigurations) invalidateManagement() }
     private fun invalidateManagement() {
         lifecycleEpoch++; biometricPending = false
         if (::biometricPrompt.isInitialized) biometricPrompt.cancelAuthentication()
-        authorized = false; pendingRemoval = null; preferPin = false; optionsRequest = 0
+        authorized = false; changingCredential = false; pendingRemoval = null; preferPin = false; biometricAutoLaunched = false; optionsRequest = 0
         confirm?.fill('\u0000'); confirm = null; confirmation = false; error = ""
         // Never expose a stale enrollment form while the serialized credential
         // executor is still finishing work from the previous foreground session.
@@ -335,7 +348,7 @@ class MainActivity : FragmentActivity() {
                                         }) { Text("\u22ee", style = MaterialTheme.typography.headlineSmall) }
                                         DropdownMenu(menuOpen, { menuOpen = false }) {
                                             DropdownMenuItem(text = { Text("Uninstall\u2026") }, onClick = {
-                                                menuOpen = false; pendingRemoval = row; error = ""; preferPin = false
+                                                menuOpen = false; pendingRemoval = row; error = ""; preferPin = false; biometricAutoLaunched = false
                                             })
                                         }
                                     }
@@ -360,31 +373,31 @@ class MainActivity : FragmentActivity() {
                                 Text("Auto-confirm PIN", style = MaterialTheme.typography.titleMedium)
                                 Text("Unlock after the last digit. Turn off to require Continue.", style = MaterialTheme.typography.bodySmall)
                             }
-                            Switch(checked = settings.autoPin, onCheckedChange = { if (authorized) app.config.prefs.edit().putBoolean("auto_pin", it).apply() })
+                            Switch(checked = settings.autoPin, onCheckedChange = { if (authorized) app.config.prefs.edit { putBoolean("auto_pin", it) } })
                         }
                         Text("Current fallback: ${app.vault.kind().label}", style = MaterialTheme.typography.titleMedium)
-                        TextButton(onClick = { if (authorized) { enrollmentKind = app.vault.kind(); enrolled = false; authorized = false; confirmation = false; error = "" } }) { Text("Change PIN, pattern or password") }
+                        TextButton(onClick = { if (authorized) { enrollmentKind = app.vault.kind(); changingCredential = true; enrolled = false; authorized = false; confirmation = false; error = "" } }) { Text("Change PIN, pattern or password") }
                     } }
                     item { LockerCard("Relock rules") {
                         LockEngine.Rule.entries.forEach { rule ->
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                RadioButton(selected = settings.rule == rule, onClick = { if (authorized) app.config.prefs.edit().putString("rule", rule.name).apply() })
+                                RadioButton(selected = settings.rule == rule, onClick = { if (authorized) app.config.prefs.edit { putString("rule", rule.name) } })
                                 Text(when (rule) { LockEngine.Rule.ON_EXIT -> "Immediately after leaving"; LockEngine.Rule.SCREEN_OFF -> "On screen off / device lock"; LockEngine.Rule.TIMEOUT -> "After timeout" })
                             }
                         }
                         if (settings.rule == LockEngine.Rule.TIMEOUT) {
                             Text("Timeout: ${settings.seconds} seconds")
-                            Slider(value = settings.seconds.toFloat(), valueRange = 15f..600f, onValueChange = { if (authorized) app.config.prefs.edit().putInt("seconds", it.toInt()).apply() })
+                            Slider(value = settings.seconds.toFloat(), valueRange = 15f..600f, onValueChange = { if (authorized) app.config.prefs.edit { putInt("seconds", it.toInt()) } })
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Switch(checked = settings.shared, onCheckedChange = { if (authorized) app.config.prefs.edit().putBoolean("shared", it).apply() })
+                            Switch(checked = settings.shared, onCheckedChange = { if (authorized) app.config.prefs.edit { putBoolean("shared", it) } })
                             Text("Shared session (less private)", Modifier.padding(start = 12.dp))
                         }
                         Text("Default: authenticate each app separately. Screen off and service/process restart always clear every session.")
                     } }
                     item { LockerCard("Samsung battery setup") {
                         Text("Settings → Apps → Sam App Locker → Battery → Unrestricted, if available. Under Battery → Background usage limits, remove this app from Sleeping and Deep sleeping apps; add it to Never sleeping apps if offered. Labels vary by One UI build.")
-                        Button(onClick = { launchSettings(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) }) { Text("Open app settings") }
+                        Button(onClick = { launchSettings(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, "package:$packageName".toUri())) }) { Text("Open app settings") }
                         Text("Force-stop, safe mode, permission revocation, and uninstall interrupt protection. Only you can enable the accessibility service again.")
                     } }
                     item { AppearancePicker(settings.appearance) { if (authorized) app.config.setAppearance(it) } }
@@ -394,7 +407,7 @@ class MainActivity : FragmentActivity() {
                             Triple("bright", "Brighter authentication screen", settings.bright)).forEach { (key, label, checked) ->
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(label, Modifier.weight(1f))
-                                Switch(checked, { if (authorized) app.config.prefs.edit().putBoolean(key, it).apply() })
+                                Switch(checked, { if (authorized) app.config.prefs.edit { putBoolean(key, it) } })
                             }
                         }
                         Text("Brightness changes only the lock window, not your phone's saved brightness.", style = MaterialTheme.typography.bodySmall)
@@ -403,7 +416,7 @@ class MainActivity : FragmentActivity() {
                         Text("Local operational events only; no screen text or credentials. Timings are frame submission, not physical presentation.")
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("Record local diagnostics", Modifier.weight(1f))
-                            Switch(settings.logging, { if (authorized) app.config.prefs.edit().putBoolean("logging", it).apply() })
+                            Switch(settings.logging, { if (authorized) app.config.prefs.edit { putBoolean("logging", it) } })
                         }
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             TextButton(onClick = { exportReport(false) }) { Text("Export diagnostics") }
@@ -430,4 +443,3 @@ class MainActivity : FragmentActivity() {
         }
     }
 }
-

@@ -15,6 +15,7 @@ class LockEngine(private val now: () -> Long) {
     private var generation = 0L
     private val sessions = mutableMapOf<String, Long>()
     val shieldRequired get() = connected && (uncertain || challenge != null)
+    fun isAuthenticated(pkg: String): Boolean = connected && pkg in protectedApps && valid(pkg)
 
     fun configure(apps: Set<String>, rule: Rule, timeoutMs: Long, shared: Boolean) {
         protectedApps = apps.toSet(); this.rule = rule
@@ -28,7 +29,7 @@ class LockEngine(private val now: () -> Long) {
         if (!connected) return
         if (rule == Rule.ON_EXIT) {
             sessions.keys.removeAll { it != "*" && it !in packages }
-            if (visible != packages) sessions.remove("*")
+            if (packages.none { it in protectedApps }) sessions.remove("*")
         }
         // An unreadable keyboard/transition on an unrelated app is not evidence
         // that a protected app is visible. Preserve fail-closed behavior only

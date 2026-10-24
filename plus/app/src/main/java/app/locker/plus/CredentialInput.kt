@@ -10,6 +10,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.*
@@ -45,15 +47,26 @@ import androidx.compose.ui.unit.dp
                         }
                     }
                 }
-                CredentialKind.PASSWORD -> OutlinedTextField(value, { if (it.length <= 64) value = it },
-                    label = { Text("Password") }, enabled = enabled, singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(), shape = RoundedCornerShape(20.dp),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false, imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = { submit() }), modifier = Modifier.fillMaxWidth())
+                CredentialKind.PASSWORD -> {
+                    val focusRequester = remember { FocusRequester() }
+                    LaunchedEffect(identity, enabled) {
+                        if (enabled) runCatching { focusRequester.requestFocus() }
+                    }
+                    OutlinedTextField(value, { if (it.length <= 64) value = it },
+                        label = { Text("Password") }, enabled = enabled, singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(), shape = RoundedCornerShape(20.dp),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false, imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = { submit() }),
+                        modifier = Modifier.fillMaxWidth().focusRequester(focusRequester))
+                }
                 CredentialKind.PATTERN -> {
                     Text("Draw your pattern", style = MaterialTheme.typography.titleMedium)
                     val color = MaterialTheme.colorScheme.primary
-                    val latestSubmit by rememberUpdatedState({ submit() })
+                    var dragPosition by remember(identity) { mutableStateOf<Offset?>(null) }
+                    val latestSubmit by rememberUpdatedState({
+                        dragPosition = null
+                        if (value.length in 1..3) value = "" else submit()
+                    })
                     fun add(dot: Int) {
                         val next = appendPattern(value.map { it - '0' }, dot).joinToString("")
                         if (next != value) touch()
@@ -63,33 +76,44 @@ import androidx.compose.ui.unit.dp
                         .pointerInput(enabled, identity) {
                             if (enabled) detectDragGestures(onDragStart = { point ->
                                 value = ""
+                                dragPosition = point
                                 val col = (point.x / (size.width / 3f)).toInt().coerceIn(0, 2)
                                 val row = (point.y / (size.height / 3f)).toInt().coerceIn(0, 2)
                                 add(row * 3 + col)
                             }, onDrag = { change, _ ->
                                 change.consume()
+                                dragPosition = change.position
                                 for (dot in 0..8) {
                                     val center = Offset((dot % 3 + .5f) * size.width / 3, (dot / 3 + .5f) * size.height / 3)
-                                    if ((change.position - center).getDistance() < size.width / 9f) {
+                                    if ((change.position - center).getDistance() < size.width / 6.5f) {
                                         add(dot)
                                     }
                                 }
-                            }, onDragEnd = { latestSubmit() }, onDragCancel = { value = "" })
+                            }, onDragEnd = { latestSubmit() }, onDragCancel = { dragPosition = null; value = "" })
                         }) {
                         Canvas(Modifier.matchParentSize()) {
                             val dots = value.map { it - '0' }
                             fun center(dot: Int) = Offset((dot % 3 + .5f) * size.width / 3, (dot / 3 + .5f) * size.height / 3)
                             dots.zipWithNext().forEach { (a, b) -> drawLine(color.copy(alpha = .45f), center(a), center(b), 5.dp.toPx()) }
+                            val currentDrag = dragPosition
+                            if (currentDrag != null && dots.isNotEmpty()) {
+                                drawLine(color.copy(alpha = .3f), center(dots.last()), currentDrag, 4.dp.toPx())
+                            }
                             repeat(9) { dot -> drawCircle(color.copy(alpha = if (dot in dots) 1f else .35f), if (dot in dots) 10.dp.toPx() else 6.dp.toPx(), center(dot)) }
                         }
                         Column(Modifier.fillMaxSize()) { repeat(3) { row ->
                             Row(Modifier.weight(1f)) { repeat(3) { col ->
-                                TextButton(onClick = { add(row * 3 + col) }, enabled = enabled,
-                                    modifier = Modifier.weight(1f).fillMaxHeight().semantics { contentDescription = "Pattern dot ${row * 3 + col + 1}" }) { }
+                                val dotIndex = row * 3 + col
+                                val selected = ('0' + dotIndex) in value
+                                TextButton(onClick = { add(dotIndex) }, enabled = enabled,
+                                    modifier = Modifier.weight(1f).fillMaxHeight().semantics {
+                                        contentDescription = "Pattern dot ${dotIndex + 1}"
+                                        stateDescription = if (selected) "Selected" else "Not selected"
+                                    }) { }
                             } }
                         } }
                     }
-                    TextButton(onClick = { value = "" }, enabled = enabled) { Text("Clear pattern") }
+                    TextButton(onClick = { dragPosition = null; value = "" }, enabled = enabled) { Text("Clear pattern") }
                 }
             }
             if (kind != CredentialKind.PIN || autoPinLength == 0) Button(onClick = { submit() },

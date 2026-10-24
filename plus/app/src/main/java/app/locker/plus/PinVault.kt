@@ -5,6 +5,7 @@ import android.os.SystemClock
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import androidx.core.content.edit
 import com.lambdapioneer.argon2kt.Argon2Kt
 import com.lambdapioneer.argon2kt.Argon2Mode
 import com.lambdapioneer.argon2kt.Argon2Version
@@ -80,7 +81,13 @@ class PinVault(context: Context) {
         try {
             require(validCredential(pin, kind))
             val sealed = seal(newRecord(pin, kind))
-            check(prefs.edit().putString("sealed", sealed).putInt("pin_length", if (kind == CredentialKind.PIN) pin.size else 0).putString("kind", kind.name).putInt("failures", 0).commit())
+            val savedLen = if (kind == CredentialKind.PIN) pin.size else 0
+            prefs.edit(commit = true) {
+                putString("sealed", sealed)
+                putInt("pin_length", savedLen)
+                putString("kind", kind.name)
+                putInt("failures", 0)
+            }
             blockedUntil = 0
             initialized = true
         } finally { pin.fill('\u0000') }
@@ -99,7 +106,7 @@ class PinVault(context: Context) {
             if (pin.size > 64) return Result(false, "Credential is too long")
             // Persist the attempt before expensive work; killing the process cannot erase it.
             val count = (failures + 1).coerceAtMost(20)
-            check(prefs.edit().putInt("failures", count).commit())
+            prefs.edit(commit = true) { putInt("failures", count) }
             val data = Base64.decode(prefs.getString("sealed", null), Base64.NO_WRAP)
             require(data.size in 76..81)
             val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, data.copyOfRange(0, 12))) }
@@ -118,10 +125,14 @@ class PinVault(context: Context) {
                 finally { actual.fill(0); expected.fill(0) }
             } finally { plain.fill(0) }
             if (success) {
-                val editor = prefs.edit().putInt("failures", 0).putInt("pin_length", if (kind == CredentialKind.PIN) pin.size else 0)
-                // Authenticate the old record first, then atomically replace it. Failed attempts never migrate.
-                if (legacy) editor.putString("sealed", seal(newRecord(pin, kind)))
-                check(editor.commit()); blockedUntil = 0
+                val upgradedSealed = if (legacy) seal(newRecord(pin, kind)) else null
+                val savedLen = if (kind == CredentialKind.PIN) pin.size else 0
+                prefs.edit(commit = true) {
+                    putInt("failures", 0)
+                    putInt("pin_length", savedLen)
+                    if (upgradedSealed != null) putString("sealed", upgradedSealed)
+                }
+                blockedUntil = 0
                 if (legacy) Diagnostics.record("pin_format_upgraded")
             }
             else if (count >= 5) blockedUntil = SystemClock.elapsedRealtime() + penalty(count)

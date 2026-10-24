@@ -54,6 +54,31 @@ class LockEngineTest {
         val e = engine(LockEngine.Rule.SCREEN_OFF, true); e.windows(setOf("a", "b")); e.authenticate(e.challenge!!, true); assertFalse(e.shieldRequired)
         e.screenLocked(); e.windows(setOf("b")); assertTrue(e.shieldRequired)
     }
+    @Test fun sharedSessionOnExitPreservesUnlockBetweenProtectedAppsAndRevokesOnUnprotectedExit() {
+        val e = engine(LockEngine.Rule.ON_EXIT, true)
+        e.windows(setOf("a"))
+        assertTrue(e.authenticate(e.challenge!!, true))
+        assertFalse(e.shieldRequired)
+        e.windows(setOf("b"))
+        assertFalse(e.shieldRequired)
+        assertTrue(e.isAuthenticated("b"))
+        e.windows(setOf("public"))
+        assertFalse(e.isAuthenticated("a"))
+        assertFalse(e.isAuthenticated("b"))
+        e.windows(setOf("b"))
+        assertTrue(e.shieldRequired)
+    }
+    @Test fun isAuthenticatedReflectsPerAppSharedAndExpiredSessions() {
+        val e = engine(LockEngine.Rule.TIMEOUT, false)
+        e.windows(setOf("a"))
+        assertFalse(e.isAuthenticated("a"))
+        assertTrue(e.authenticate(e.challenge!!, true))
+        assertTrue(e.isAuthenticated("a"))
+        assertFalse(e.isAuthenticated("b"))
+        assertFalse(e.isAuthenticated("unprotected"))
+        time = 15_000
+        assertFalse(e.isAuthenticated("a"))
+    }
     @Test fun processRecreationDoesNotRestoreSessions() {
         val old = engine(); old.windows(setOf("a")); old.authenticate(old.challenge!!, true)
         val fresh = engine(); fresh.windows(setOf("a")); assertTrue(fresh.shieldRequired)

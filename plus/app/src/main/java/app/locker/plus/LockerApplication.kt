@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import android.os.SystemClock
 import androidx.compose.runtime.mutableStateOf
+import androidx.core.content.edit
 import java.util.concurrent.Executors
 
 class LockerApplication : Application() {
@@ -27,9 +28,14 @@ class Config(context: Context) {
     fun appearance() = Appearance(savedEnum(prefs.getString("style", null), VisualStyle.MATERIAL),
         savedEnum(prefs.getString("color_mode", null), ColorMode.SYSTEM),
         savedEnum(prefs.getString("backdrop", null), Backdrop.PLAIN), dynamic())
-    fun setAppearance(value: Appearance) { prefs.edit().putString("style", value.style.name)
-        .putString("color_mode", value.mode.name).putString("backdrop", value.background.name)
-        .putBoolean("dynamic", value.dynamic).apply() }
+    fun setAppearance(value: Appearance) {
+        prefs.edit {
+            putString("style", value.style.name)
+            putString("color_mode", value.mode.name)
+            putString("backdrop", value.background.name)
+            putBoolean("dynamic", value.dynamic)
+        }
+    }
     fun apps() = locked.getLockedApps()
     fun toggle(pkg: String, enabled: Boolean) {
         state.value = state.value.copy(apps = if (enabled) state.value.apps + pkg else state.value.apps - pkg)
