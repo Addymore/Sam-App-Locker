@@ -3,6 +3,7 @@ package app.locker.plus
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -13,80 +14,131 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.*
-import androidx.compose.ui.text.input.*
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import kotlin.math.hypot
 
-@Composable fun CredentialInput(kind: CredentialKind, identity: Any?, enabled: Boolean,
-    autoPinLength: Int, onSubmit: (CharArray) -> Unit) {
-    val view = androidx.compose.ui.platform.LocalView.current
-    val haptics = LocalCredentialHaptics.current
-    fun touch() { if (haptics) view.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP) }
+@Composable fun CredentialInput(
+    kind: CredentialKind,
+    identity: Any?,
+    enabled: Boolean,
+    autoPinLength: Int,
+    hidePatternTrail: Boolean = false,
+    scramblePin: Boolean = false,
+    onSubmit: (CharArray) -> Unit
+) {
     var value by remember(identity, kind) { mutableStateOf("") }
+    var autoSubmitted by remember(identity, kind) { mutableStateOf(false) }
+    var dragPosition by remember(identity, kind) { mutableStateOf<Offset?>(null) }
+    val haptic = LocalHapticFeedback.current
+    val useHaptics = LocalCredentialHaptics.current
+    fun feedback() { if (useHaptics) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove) }
     fun submit() {
-        val secret = value.toCharArray()
-        if (enabled && validCredential(secret, kind)) { value = ""; onSubmit(secret) } else secret.fill('\u0000')
+        val chars = value.toCharArray()
+        if (enabled && validCredential(chars, kind)) { value = ""; dragPosition = null; onSubmit(chars) } else chars.fill('\u0000')
     }
-    Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(32.dp),
+    val latestSubmit by rememberUpdatedState {
+        dragPosition = null
+        if (validCredential(value.toCharArray(), kind)) submit()
+        else if (kind == CredentialKind.PATTERN) value = ""
+    }
+    val shuffledDigits = remember(identity, scramblePin) {
+        if (scramblePin) ('0'..'9').map { it.toString() }.shuffled()
+        else listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "0")
+    }
+    val pinRows = remember(shuffledDigits) {
+        listOf(
+            shuffledDigits.subList(0, 3),
+            shuffledDigits.subList(3, 6),
+            shuffledDigits.subList(6, 9),
+            listOf("Clear", shuffledDigits[9], "⌫")
+        )
+    }
+    Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(28.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-        Column(Modifier.padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.padding(18.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
             when (kind) {
                 CredentialKind.PIN -> {
-                    Text(if (value.isEmpty()) "Enter PIN" else "●".repeat(value.length), style = MaterialTheme.typography.titleLarge,
-                        modifier = Modifier.padding(vertical = 8.dp).semantics { contentDescription = "PIN, ${value.length} digits entered" })
-                    listOf(listOf("1", "2", "3"), listOf("4", "5", "6"), listOf("7", "8", "9"), listOf("Clear", "0", "⌫")).forEach { row ->
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            row.forEach { digit -> TextButton(onClick = {
-                                touch()
-                                value = when (digit) { "Clear" -> ""; "⌫" -> value.dropLast(1); else -> (value + digit).take(12) }
-                                if (digit.length == 1 && shouldAutoSubmitPin(autoPinLength, value.length)) submit()
-                            }, enabled = enabled, modifier = Modifier.weight(1f).heightIn(min = 52.dp).semantics {
-                                contentDescription = if (digit == "⌫") "Delete last digit" else digit
-                            }) { Text(digit, style = if (digit == "Clear") MaterialTheme.typography.labelLarge else MaterialTheme.typography.headlineSmall) } }
+                    Text(if (value.isEmpty()) "6–12 digits" else "●".repeat(value.length),
+                        style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center,
+                        modifier = Modifier.semantics { contentDescription = "PIN, ${value.length} digits entered" })
+                    pinRows.forEach { row ->
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            row.forEach { key ->
+                                FilledTonalButton(onClick = {
+                                    feedback()
+                                    val next = when (key) { "Clear" -> ""; "⌫" -> value.dropLast(1); else -> (value + key).take(12) }
+                                    val shouldSubmit = enabled && !autoSubmitted && next.length > value.length && shouldAutoSubmitPin(autoPinLength, next.length)
+                                    value = next
+                                    if (next.length < autoPinLength) autoSubmitted = false
+                                    if (shouldSubmit) { autoSubmitted = true; submit() }
+                                }, enabled = enabled, shape = CircleShape, modifier = Modifier.weight(1f).heightIn(min = 54.dp)
+                                    .semantics { contentDescription = if (key == "⌫") "Backspace" else key }) {
+                                    Text(key, style = if (key.length == 1) MaterialTheme.typography.titleLarge else MaterialTheme.typography.labelLarge,
+                                        fontWeight = FontWeight.SemiBold)
+                                }
+                            }
                         }
                     }
                 }
                 CredentialKind.PASSWORD -> {
                     val focusRequester = remember { FocusRequester() }
+                    val keyboardController = LocalSoftwareKeyboardController.current
                     LaunchedEffect(identity, enabled) {
-                        if (enabled) runCatching { focusRequester.requestFocus() }
+                        if (enabled) {
+                            runCatching { focusRequester.requestFocus() }
+                            keyboardController?.show()
+                        }
                     }
-                    OutlinedTextField(value, { if (it.length <= 64) value = it },
-                        label = { Text("Password") }, enabled = enabled, singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(), shape = RoundedCornerShape(20.dp),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false, imeAction = ImeAction.Done),
+                    OutlinedTextField(value = value, onValueChange = { value = it.take(64) }, enabled = enabled, singleLine = true,
+                        label = { Text("Password") }, visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
                         keyboardActions = KeyboardActions(onDone = { submit() }),
-                        modifier = Modifier.fillMaxWidth().focusRequester(focusRequester))
+                        shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth().focusRequester(focusRequester))
                 }
                 CredentialKind.PATTERN -> {
-                    Text("Draw your pattern", style = MaterialTheme.typography.titleMedium)
-                    val color = MaterialTheme.colorScheme.primary
-                    var dragPosition by remember(identity) { mutableStateOf<Offset?>(null) }
-                    val latestSubmit by rememberUpdatedState({
-                        dragPosition = null
-                        if (value.length in 1..3) value = "" else submit()
-                    })
                     fun add(dot: Int) {
                         val next = appendPattern(value.map { it - '0' }, dot).joinToString("")
-                        if (next != value) touch()
-                        value = next
+                        if (next != value) { feedback(); value = next }
                     }
-                    Box(Modifier.sizeIn(maxWidth = 288.dp, maxHeight = 288.dp).fillMaxWidth().aspectRatio(1f)
-                        .pointerInput(enabled, identity) {
-                            if (enabled) detectDragGestures(onDragStart = { point ->
+                    val color = MaterialTheme.colorScheme.primary
+                    Text(
+                        if (hidePatternTrail) {
+                            if (value.isEmpty()) "Stealth pattern active (trail hidden)" else "Drawing stealth pattern…"
+                        } else {
+                            if (value.isEmpty()) "Connect at least 4 dots" else "${value.length} dots connected"
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.semantics { contentDescription = "Pattern, ${value.length} dots selected" }
+                    )
+                    Box(Modifier.size(236.dp).semantics { contentDescription = "Pattern grid" }
+                        .pointerInput(identity, enabled) {
+                            if (!enabled) return@pointerInput
+                            detectDragGestures(onDragStart = { offset ->
                                 value = ""
-                                dragPosition = point
-                                val col = (point.x / (size.width / 3f)).toInt().coerceIn(0, 2)
-                                val row = (point.y / (size.height / 3f)).toInt().coerceIn(0, 2)
-                                add(row * 3 + col)
-                            }, onDrag = { change, _ ->
-                                change.consume()
-                                dragPosition = change.position
+                                dragPosition = offset
                                 for (dot in 0..8) {
-                                    val center = Offset((dot % 3 + .5f) * size.width / 3, (dot / 3 + .5f) * size.height / 3)
-                                    if ((change.position - center).getDistance() < size.width / 6.5f) {
+                                    val c = Offset((dot % 3 + .5f) * size.width / 3f, (dot / 3 + .5f) * size.height / 3f)
+                                    if (hypot(offset.x - c.x, offset.y - c.y) <= size.width / 6.5f) add(dot)
+                                }
+                            }, onDrag = { change, _ ->
+                                val p = change.position
+                                dragPosition = p
+                                for (dot in 0..8) {
+                                    val c = Offset((dot % 3 + .5f) * size.width / 3f, (dot / 3 + .5f) * size.height / 3f)
+                                    if (hypot(p.x - c.x, p.y - c.y) <= size.width / 6.5f) {
                                         add(dot)
+                                        change.consume()
                                     }
                                 }
                             }, onDragEnd = { latestSubmit() }, onDragCancel = { dragPosition = null; value = "" })
@@ -94,12 +146,21 @@ import androidx.compose.ui.unit.dp
                         Canvas(Modifier.matchParentSize()) {
                             val dots = value.map { it - '0' }
                             fun center(dot: Int) = Offset((dot % 3 + .5f) * size.width / 3, (dot / 3 + .5f) * size.height / 3)
-                            dots.zipWithNext().forEach { (a, b) -> drawLine(color.copy(alpha = .45f), center(a), center(b), 5.dp.toPx()) }
-                            val currentDrag = dragPosition
-                            if (currentDrag != null && dots.isNotEmpty()) {
-                                drawLine(color.copy(alpha = .3f), center(dots.last()), currentDrag, 4.dp.toPx())
+                            if (!hidePatternTrail) {
+                                dots.zipWithNext().forEach { (a, b) -> drawLine(color.copy(alpha = .45f), center(a), center(b), 5.dp.toPx()) }
+                                val currentDrag = dragPosition
+                                if (currentDrag != null && dots.isNotEmpty()) {
+                                    drawLine(color.copy(alpha = .3f), center(dots.last()), currentDrag, 4.dp.toPx())
+                                }
                             }
-                            repeat(9) { dot -> drawCircle(color.copy(alpha = if (dot in dots) 1f else .35f), if (dot in dots) 10.dp.toPx() else 6.dp.toPx(), center(dot)) }
+                            repeat(9) { dot ->
+                                val highlight = !hidePatternTrail && dot in dots
+                                drawCircle(
+                                    color = color.copy(alpha = if (highlight) 1f else .35f),
+                                    radius = if (highlight) 10.dp.toPx() else 6.dp.toPx(),
+                                    center = center(dot)
+                                )
+                            }
                         }
                         Column(Modifier.fillMaxSize()) { repeat(3) { row ->
                             Row(Modifier.weight(1f)) { repeat(3) { col ->

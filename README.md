@@ -1,15 +1,15 @@
 # Sam App Locker
 
-**Sam App Locker 1.4:** Android 15+, reliable fingerprint-first locking, fixed Password IME focus and post-authentication handoff on Samsung One UI, shared-session `ON_EXIT` support, improved pattern drawing and rotation handling, and zero lint/compiler warnings. [Release APKs](https://github.com/Addymore/Sam-App-Locker/releases/tag/v1.4.0) · [Changes](plus/UPDATE-1.4.md) · [Verification](plus/RELEASE-1.4-VERIFICATION.md).
+**Sam App Locker 1.5:** Android 15+, Zenzy VIP card layout & styles (`Zenzy VIP`, `Pure AMOLED`, `Midnight`), notification hiding for locked apps (`LockerNotificationService`), Device Admin & Package Uninstaller protection, zero-flash app-switch transitions, stealth pattern mode (hidden pattern trail) & scrambled PIN keypad, and zero lint/compiler warnings. [Release APKs](https://github.com/Addymore/Sam-App-Locker/releases/tag/v1.5.0) · [Changes](plus/UPDATE-1.5.md) · [Verification](plus/RELEASE-1.5-VERIFICATION.md).
 
-An offline Kotlin/Jetpack Compose app locker for ordinary Samsung Galaxy phones. Material 3 cards, searchable app selection, strong fingerprint authentication and an app-specific PIN, pattern or password. Developed and tested on a Galaxy A57 running Android 17 / One UI 9.
+An offline Kotlin/Jetpack Compose app locker for ordinary Samsung Galaxy phones. Material 3 & Zenzy VIP cards, searchable app selection with category badges, strong fingerprint authentication, notification privacy shield, optional uninstall guard, and an app-specific PIN (with optional scrambled keypad), pattern (with optional hidden trail), or password. Developed and tested on a Galaxy A57 running Android 17 / One UI 9.
 
-[Download debug and signed release APKs](https://github.com/Addymore/Sam-App-Locker/releases/tag/v1.4.0) · [Samsung setup](plus/SETUP.md) · [Verification and known limits](plus/RELEASE-1.4-VERIFICATION.md) · [Security architecture](plus/ARCHITECTURE.md)
+[Download debug and signed release APKs](https://github.com/Addymore/Sam-App-Locker/releases/tag/v1.5.0) · [Samsung setup](plus/SETUP.md) · [Verification and known limits](plus/RELEASE-1.5-VERIFICATION.md) · [Security architecture](plus/ARCHITECTURE.md)
 
 ## Choose an APK
 
-- **Release (1.4):** `app.sam.locker`, signed with this project's dedicated release key, not debuggable. Updates 1.1–1.3 in place and retains credentials and selections. For a new installation, create your own credential and enable its Accessibility service.
-- **Debug (1.4):** `app.sam.locker.debug`, a separate debuggable installation intended for testing.
+- **Release (1.5):** `app.sam.locker`, signed with this project's dedicated release key, not debuggable. Updates 1.1–1.4 in place and retains credentials and selections. For a new installation, create your own credential and enable its Accessibility service.
+- **Debug (1.5):** `app.sam.locker.debug`, a separate debuggable installation intended for testing.
 
 The owner requested new package IDs for 1.1. They do not update the old 1.0 packages in place or inherit their private data/grants. These are separate installations. Moving from debug to release requires setup again; do not run both protection services together. No PIN or settings are uploaded. An existing preview PIN automatically migrates to Argon2id after the first successful PIN entry, which still performs the old slow verification once.
 
@@ -26,12 +26,12 @@ Requires JDK 17 and Android SDK 37. Use `gradlew.bat` on Windows. The release bu
 
 ## Protection boundaries
 
-Accessibility window events trigger an opaque privacy shield, with serialized per-app sessions and stale-authentication rejection. This is third-party enforcement, not Samsung system app lock. Recordings confirmed brief target-content exposure during some launches. Notifications, widgets and other apps' Recents previews are separate exposure surfaces. Split screen/pop-up remain experimental; external displays/DeX are unsupported. Force-stop, safe mode, service interruption and owner uninstall can interrupt protection.
+Accessibility window events trigger an opaque privacy shield, with serialized per-app sessions and stale-authentication rejection. Optional Notification Access (`LockerNotificationService`) suppresses status-bar notifications from locked apps while they are not unlocked in the foreground (preserving incoming call and alarm notifications). Optional Uninstall Guard combines Device Administrator activation (`LockerDeviceAdminReceiver`) with Accessibility interception of the system package uninstaller and Device Admin settings screen.
 
-The owner controls setup, disablement and removal. No ads, analytics, network permission, device admin, usage polling or unrelated personal-data permissions are included.
+The owner controls setup, disablement and removal. No ads, analytics, network permission, usage polling or unrelated personal-data permissions are included.
 
 ## Attribution
 
 Fork of [aload0/AppLock](https://github.com/aload0/AppLock). Original MIT license and Pranav Purwar copyright remain in [LICENSE](LICENSE); the original readme is preserved in [UPSTREAM_README.md](UPSTREAM_README.md). Useful upstream Kotlin repository/search code is retained. Argon2Kt and native Argon2 license notices are bundled in the APK assets.
 
-Sam App Locker 1.4.0 requires **Android 15 (API 35) or later**. The published rc2 and upstream reference modules retain their historical requirements.
+Sam App Locker 1.5.0 requires **Android 15 (API 35) or later**. The published rc2 and upstream reference modules retain their historical requirements.

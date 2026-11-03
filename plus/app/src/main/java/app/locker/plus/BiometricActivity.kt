@@ -1,13 +1,16 @@
 package app.locker.plus
 
+import android.content.Intent
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
-import androidx.core.content.ContextCompat
-import androidx.fragment.app.FragmentActivity
 import androidx.compose.runtime.*
+import androidx.compose.ui.graphics.toArgb
+import androidx.core.content.ContextCompat
+import androidx.core.graphics.drawable.toDrawable
+import androidx.fragment.app.FragmentActivity
 
 class BiometricActivity : FragmentActivity() {
     private lateinit var token: LockEngine.Challenge
@@ -19,19 +22,11 @@ class BiometricActivity : FragmentActivity() {
     private lateinit var prompt: BiometricPrompt
     private var appName by mutableStateOf("Protected app")
     override fun onCreate(savedInstanceState: Bundle?) {
+        window.setBackgroundDrawable(shieldBackground().toArgb().toDrawable())
         super.onCreate(savedInstanceState)
+        overrideActivityTransition(OVERRIDE_TRANSITION_OPEN, 0, 0)
+        overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, 0, 0)
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-        token = LockEngine.Challenge(intent.getStringExtra("package") ?: "", intent.getLongExtra("generation", -1))
-        attempt = intent.getLongExtra("attempt", -1L)
-        if (LockerService.instance?.biometricHostStarted(token, attempt) { invalidateHost() } != true || isInMultiWindowMode) { complete(false); return }
-        app.io.execute {
-            val label = runCatching { packageManager.getApplicationLabel(packageManager.getApplicationInfo(token.packageName, 0)).toString() }.getOrDefault("Protected app")
-            runOnUiThread { if (!isDestroyed) appName = label }
-        }
-        setContent { LockerTheme(appearance = app.config.state.value.appearance, haptics = app.config.state.value.haptics) {
-            SideEffect { window.attributes = window.attributes.apply { screenBrightness = if (app.config.state.value.bright) 1f else -1f } }
-            BiometricBackdrop(appName)
-        } }
         prompt = BiometricPrompt(this, ContextCompat.getMainExecutor(this), object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) { complete(true) }
             override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
@@ -45,9 +40,36 @@ class BiometricActivity : FragmentActivity() {
             }
             override fun onAuthenticationFailed() { Diagnostics.record("biometric_no_match") }
         })
-        if (BiometricManager.from(this).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) != BiometricManager.BIOMETRIC_SUCCESS) { complete(false); return }
+        setContent { LockerTheme(appearance = app.config.state.value.appearance, haptics = app.config.state.value.haptics) {
+            SideEffect { window.attributes = window.attributes.apply { screenBrightness = if (app.config.state.value.bright) 1f else -1f } }
+            BiometricBackdrop(appName)
+        } }
         restoringPrompt = savedInstanceState != null
+        bindChallengeIntent(intent)
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        restoringPrompt = false
+        bindChallengeIntent(intent)
+    }
+
+    private fun bindChallengeIntent(intent: Intent) {
+        window.setBackgroundDrawable(shieldBackground().toArgb().toDrawable())
+        completed = false
+        handoffScheduled = false
+        token = LockEngine.Challenge(intent.getStringExtra("package") ?: "", intent.getLongExtra("generation", -1))
+        attempt = intent.getLongExtra("attempt", -1L)
+        if (LockerService.instance?.biometricHostStarted(token, attempt) { invalidateHost() } != true || isInMultiWindowMode) { complete(false); return }
+        app.io.execute {
+            val label = runCatching { packageManager.getApplicationLabel(packageManager.getApplicationInfo(token.packageName, 0)).toString() }.getOrDefault("Protected app")
+            runOnUiThread { if (!isDestroyed) appName = label }
+        }
+        if (BiometricManager.from(this).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) != BiometricManager.BIOMETRIC_SUCCESS) { complete(false); return }
+        if (hasWindowFocus()) { entryComplete = true; handoffWhenReady() }
+    }
+
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         // Rotation/no-animation launches need not deliver a new enter-animation callback.
@@ -81,7 +103,11 @@ class BiometricActivity : FragmentActivity() {
     private fun complete(success: Boolean, options: Boolean = false, message: String = "") {
         if (completed) return
         completed = true
-        val finishHost = { finish(); @Suppress("DEPRECATION") overridePendingTransition(0, 0) }
+        val finishHost = {
+            finish()
+            overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, 0, 0)
+            @Suppress("DEPRECATION") overridePendingTransition(0, 0)
+        }
         LockerService.instance?.biometricResult(token, attempt, success, finishHost, options, message) ?: finishHost()
     }
     override fun onMultiWindowModeChanged(isInMultiWindowMode: Boolean, newConfig: android.content.res.Configuration) {

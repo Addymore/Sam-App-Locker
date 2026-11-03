@@ -25,7 +25,7 @@ class LockEngine(private val now: () -> Long) {
     fun connect() { connected = true; resetSessions(); reconcile() }
     fun disconnect() { connected = false; visible = emptySet(); uncertain = false; resetSessions() }
     fun screenLocked() { visible = emptySet(); uncertain = false; resetSessions() }
-    fun windows(packages: Set<String>, incomplete: Boolean = false) {
+    fun windows(packages: Set<String>, incomplete: Boolean = false, preferred: String? = null) {
         if (!connected) return
         if (rule == Rule.ON_EXIT) {
             sessions.keys.removeAll { it != "*" && it !in packages }
@@ -37,7 +37,7 @@ class LockEngine(private val now: () -> Long) {
         val protectedRisk = packages.any { it in protectedApps } ||
             (packages.isEmpty() && (visible.any { it in protectedApps } || uncertain))
         visible = packages.toSet(); uncertain = incomplete && protectedRisk
-        reconcile()
+        reconcile(preferred)
     }
     fun tick() = reconcile()
     fun authenticate(token: Challenge, success: Boolean): Boolean {
@@ -56,11 +56,18 @@ class LockEngine(private val now: () -> Long) {
         if (rule == Rule.TIMEOUT && now() - start >= timeoutMs) { sessions.remove(key); return false }
         return true
     }
-    private fun reconcile() {
+    private fun reconcile(preferred: String? = null) {
         if (!connected) return
         if (rule == Rule.TIMEOUT) sessions.entries.removeAll { now() - it.value >= timeoutMs }
         val locked = visible.filter { it in protectedApps && !valid(it) }.sorted()
-        if (challenge?.packageName !in locked || uncertain) { if (challenge != null) generation++; challenge = null }
-        if (challenge == null && locked.isNotEmpty() && !uncertain) challenge = Challenge(locked.first(), ++generation)
+        val nextTarget = if (preferred != null && preferred in locked) preferred
+            else if (challenge?.packageName in locked) challenge?.packageName
+            else locked.firstOrNull()
+        if (uncertain || nextTarget == null) {
+            if (challenge != null) generation++
+            challenge = null
+        } else if (challenge?.packageName != nextTarget) {
+            challenge = Challenge(nextTarget, ++generation)
+        }
     }
 }

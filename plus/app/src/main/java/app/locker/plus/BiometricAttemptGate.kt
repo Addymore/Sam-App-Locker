@@ -4,6 +4,7 @@ package app.locker.plus
  * rotates the security challenge. Authentication still validates its full token. */
 class BiometricAttemptGate {
     private val attempted = mutableSetOf<String>()
+    fun canTake(token: LockEngine.Challenge): Boolean = token.packageName !in attempted
     fun take(token: LockEngine.Challenge): Boolean = attempted.add(token.packageName)
     fun retainVisible(packages: Set<String>) { attempted.retainAll(packages) }
 }

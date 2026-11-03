@@ -1,5 +1,6 @@
 package app.locker.plus
 
+import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.ApplicationInfo
@@ -12,6 +13,7 @@ import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -22,11 +24,13 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
@@ -47,6 +51,8 @@ class MainActivity : FragmentActivity() {
     private var enrollmentKind by mutableStateOf(CredentialKind.PIN)
     private var confirmation by mutableStateOf(false)
     private var accessibilityGranted by mutableStateOf(false)
+    private var notificationAccessGranted by mutableStateOf(false)
+    private var deviceAdminActive by mutableStateOf(false)
     private var rows by mutableStateOf<List<AppRow>>(emptyList())
     private var showLog by mutableStateOf(false)
     private var loadingApps by mutableStateOf(false)
@@ -75,9 +81,11 @@ class MainActivity : FragmentActivity() {
         if (!authorized) return
         pendingExport = if (audit) "Sam App Locker security report\nAndroid: ${android.os.Build.VERSION.RELEASE}\n" +
             "Accessibility granted: ${accessibilityEnabled()}\nService connected: ${Health.connected.value}\n" +
+            "Notification shield access: ${NotificationHealth.isAccessGranted(this)}\n" +
+            "Device admin active: ${LockerDeviceAdminReceiver.isActive(this)}\n" +
             "Protected apps: ${app.config.apps().size}\nRelock: ${app.config.rule()}\n" +
             "Credential: ${app.vault.kind().label}\nBiometric available: $strongAvailable\n" +
-            "Ordinary app protection; external uninstall and initial-frame exposure remain possible.\n"
+            "Ordinary app protection; initial-frame exposure remains possible.\n"
         else Diagnostics.text()
         exportDocument.launch(if (audit) "Sam-Locker-security-report.txt" else "Sam-Locker-diagnostics.txt")
     }
@@ -102,9 +110,10 @@ class MainActivity : FragmentActivity() {
         })
         app.credentials.execute { val exists = app.vault.exists(); runOnUiThread { enrolled = exists; loaded = true } }
         setContent {
-            LockerTheme(appearance = app.config.state.value.appearance, haptics = app.config.state.value.haptics) {
+            val uiState = app.config.state.value
+            LockerTheme(appearance = uiState.appearance, haptics = uiState.haptics) {
                 SideEffect { window.attributes = window.attributes.apply {
-                    screenBrightness = if ((!authorized || pendingRemoval != null) && app.config.state.value.bright) 1f else -1f
+                    screenBrightness = if ((!authorized || pendingRemoval != null) && uiState.bright) 1f else -1f
                 } }
                 val removal = pendingRemoval
                 LaunchedEffect(loaded, enrolled, authorized, resumeEpoch, removal?.pkg) {
@@ -118,7 +127,9 @@ class MainActivity : FragmentActivity() {
                     title = "Uninstall ${removal.label}?",
                     subtitle = "Authenticate to open Android’s uninstall confirmation. Removal outside Sam App Locker is controlled by Android.",
                     identity = removal.pkg, biometricActive = biometricPending, optionsRequest = optionsRequest, error = error, preferPin = preferPin, credentialKind = app.vault.kind(),
-                    autoPinLength = if (app.config.state.value.autoPin) app.vault.pinLength() else 0,
+                    autoPinLength = if (uiState.autoPin) app.vault.pinLength() else 0,
+                    hidePatternTrail = uiState.hidePatternTrail,
+                    scramblePin = uiState.scramblePin,
                     onPin = { pin, done -> authenticateRemoval(removal, pin, done) },
                     onCredentialSelected = { preferPin = true },
                     onBiometric = if (strongAvailable) ({ startBiometric() }) else null,
@@ -130,7 +141,9 @@ class MainActivity : FragmentActivity() {
                     onKindChange = if (!enrolled && !confirmation) ({ kind -> enrollmentKind = kind; error = "" }) else null,
                     identity = if (enrolled) "login" else if (confirmation) "confirm" else "enroll",
                     error = error, preferPin = preferPin, biometricActive = biometricPending, optionsRequest = optionsRequest,
-                    autoPinLength = if (enrolled && app.config.state.value.autoPin) app.vault.pinLength() else 0,
+                    autoPinLength = if (enrolled && uiState.autoPin) app.vault.pinLength() else 0,
+                    hidePatternTrail = enrolled && uiState.hidePatternTrail,
+                    scramblePin = enrolled && uiState.scramblePin,
                     onPin = { pin, done -> authenticate(pin, done) },
                     onCredentialSelected = { preferPin = true },
                     onBiometric = if (enrolled && strongAvailable) ({ startBiometric() }) else null,
@@ -176,7 +189,7 @@ class MainActivity : FragmentActivity() {
         }
         val epoch = lifecycleEpoch
         if (!enrolled) {
-            if (!confirmation) { confirm?.fill('\u0000'); confirm = pin; confirmation = true; error = ""; done(); return }
+            if (confirm == null) { confirm = pin; confirmation = true; error = ""; done(); return }
             if (confirm?.contentEquals(pin) != true) { confirm?.fill('\u0000'); confirm = null; pin.fill('\u0000'); confirmation = false; error = "Entries did not match. Try again."; done(); return }
             confirm?.fill('\u0000'); confirm = null
             app.credentials.execute {
@@ -209,11 +222,37 @@ class MainActivity : FragmentActivity() {
     }
     private fun launchRemoval(row: AppRow) {
         pendingRemoval = null; error = ""; preferPin = false; biometricAutoLaunched = false
+        LockerService.authorizeInAppUninstall()
         // Android owns the final confirmation. No device-owner/admin privileges.
         runCatching { startActivity(Intent(Intent.ACTION_DELETE, "package:${row.pkg}".toUri())) }
             .onFailure { error = "Android could not open uninstall. Use the phone’s app settings." }
     }
-    override fun onResume() { super.onResume(); accessibilityGranted = accessibilityEnabled(); resumeEpoch++; refreshApps() }
+    private fun launchSelfUninstall() {
+        if (!authorized) return
+        LockerDeviceAdminReceiver.disableIfActive(this)
+        deviceAdminActive = false
+        app.config.prefs.edit { putBoolean("uninstall_protection", false) }
+        LockerService.authorizeInAppUninstall(30_000L)
+        runCatching { startActivity(Intent(Intent.ACTION_DELETE, "package:$packageName".toUri())) }
+            .onFailure { android.widget.Toast.makeText(this, "Could not open uninstaller", android.widget.Toast.LENGTH_SHORT).show() }
+    }
+    private fun requestDeviceAdmin() {
+        if (!authorized) return
+        LockerService.authorizeInAppUninstall(30_000L)
+        val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
+            putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, LockerDeviceAdminReceiver.component(this@MainActivity))
+            putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, "Prevents unauthorized uninstallation of Sam App Locker until disabled inside Sam App Locker.")
+        }
+        runCatching { startActivity(intent) }
+    }
+    override fun onResume() {
+        super.onResume()
+        accessibilityGranted = accessibilityEnabled()
+        notificationAccessGranted = NotificationHealth.isAccessGranted(this)
+        deviceAdminActive = LockerDeviceAdminReceiver.isActive(this)
+        resumeEpoch++
+        refreshApps()
+    }
     override fun onPause() {
         super.onPause()
         // A quick Home/return can resume before onStop. Never carry an
@@ -235,18 +274,55 @@ class MainActivity : FragmentActivity() {
         } }
     }
     private fun launchSettings(intent: Intent) {
+        LockerService.authorizeInAppUninstall(30_000L)
         runCatching { startActivity(intent) }.onFailure { runCatching { startActivity(Intent(Settings.ACTION_SETTINGS)) } }
     }
     private fun accessibilityEnabled(): Boolean {
         val component = ComponentName(this, LockerService::class.java).flattenToString()
         return Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)?.split(':')?.any { it.equals(component, true) } == true
     }
+
+    @Composable private fun QuickFeatureTile(
+        modifier: Modifier = Modifier,
+        title: String,
+        subtitle: String,
+        active: Boolean,
+        onClick: () -> Unit
+    ) {
+        Surface(
+            modifier = modifier.clip(RoundedCornerShape(22.dp)).clickable(onClick = onClick),
+            shape = RoundedCornerShape(22.dp),
+            color = if (active) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f) else MaterialTheme.colorScheme.surfaceContainer
+        ) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text(title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Surface(
+                        shape = CircleShape,
+                        color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
+                    ) {
+                        Text(
+                            if (active) "ON" else "OFF",
+                            Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+
     @Composable private fun Dashboard() {
         var search by remember { mutableStateOf("") }
         var tab by remember { mutableIntStateOf(0) }
         var filter by remember { mutableStateOf(AppFilter.ALL) }
         val settings by app.config.state
         val selected = settings.apps
+        val hiddenMap by NotificationHealth.byApp
+        val totalHidden = NotificationHealth.hiddenCount.intValue
         val active = Health.connected.value && !Health.interrupted.value && accessibilityGranted
         val status = if (active) "Protection active" else if (Health.interrupted.value || accessibilityGranted) "Protection interrupted" else "Setup incomplete"
         val snack = remember { SnackbarHostState() }
@@ -262,31 +338,98 @@ class MainActivity : FragmentActivity() {
                 }
             } }) { padding ->
             Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.TopCenter) {
-                LazyColumn(Modifier.widthIn(max = 840.dp).fillMaxWidth(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                LazyColumn(Modifier.widthIn(max = 840.dp).fillMaxWidth(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     item {
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             Column(Modifier.weight(1f)) {
-                                Text("Sam App Locker", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text("Sam App Locker", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                                    Surface(shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.primaryContainer) {
+                                        Text("VIP", Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                                Text("Samsung One UI Privacy & App Shield", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             Surface(shape = CircleShape, color = MaterialTheme.colorScheme.secondaryContainer) {
-                                PrivacyMark(Modifier.padding(8.dp).size(24.dp))
+                                PrivacyMark(Modifier.padding(8.dp).size(26.dp))
                             }
                         }
                     }
                     item {
-                        Card(shape = RoundedCornerShape(32.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
-                            Row(Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.secondaryContainer.copy(alpha = .6f)))).padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = .65f)) { PrivacyMark(modifier = Modifier.padding(8.dp).size(24.dp)) }
-                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    Text(status, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                                    Text("${selected.size} locked apps", style = MaterialTheme.typography.bodySmall)
-                                    Text(if (strongAvailable) "${app.vault.kind().label} + fingerprint" else app.vault.kind().label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    if (!active) TextButton(onClick = { tab = 2 }) { Text("Complete setup") }
+                        Card(shape = RoundedCornerShape(30.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+                            Column(Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.secondaryContainer.copy(alpha = .65f)))).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = .75f)) { PrivacyMark(modifier = Modifier.padding(10.dp).size(28.dp)) }
+                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                        Text(status, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                        Text("${selected.size} locked apps", style = MaterialTheme.typography.bodySmall)
+                                        Text(if (strongAvailable) "${app.vault.kind().label} + fingerprint" else app.vault.kind().label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    if (!active) FilledTonalButton(onClick = { tab = 2 }) { Text("Complete setup") }
+                                }
+                                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = .6f)) {
+                                        Text(
+                                            when (settings.rule) {
+                                                LockEngine.Rule.ON_EXIT -> "Relock: Immediate"
+                                                LockEngine.Rule.SCREEN_OFF -> "Relock: Screen off"
+                                                LockEngine.Rule.TIMEOUT -> "Relock: ${settings.seconds}s"
+                                            },
+                                            Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                            style = MaterialTheme.typography.labelSmall
+                                        )
+                                    }
+                                    Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = .6f)) {
+                                        Text(
+                                            if (settings.hideNotifications && notificationAccessGranted) "Notif Shield: Active ($totalHidden hidden)"
+                                            else if (settings.hideNotifications) "Notif Shield: Grant access"
+                                            else "Notif Shield: Off",
+                                            Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                            style = MaterialTheme.typography.labelSmall
+                                        )
+                                    }
+                                    Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = .6f)) {
+                                        Text(
+                                            if (settings.uninstallProtection || deviceAdminActive) "Uninstall Guard: Active" else "Uninstall Guard: Off",
+                                            Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                            style = MaterialTheme.typography.labelSmall
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
                     if (tab != 2) {
+                        item(key = "quick-security-tiles") {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                QuickFeatureTile(
+                                    modifier = Modifier.weight(1f),
+                                    title = "Hide Notifications",
+                                    subtitle = if (notificationAccessGranted) "$totalHidden hidden" else "Tap to configure",
+                                    active = settings.hideNotifications && notificationAccessGranted,
+                                    onClick = {
+                                        if (!notificationAccessGranted) {
+                                            app.config.prefs.edit { putBoolean("hide_notifications", true) }
+                                            launchSettings(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                                        } else {
+                                            app.config.prefs.edit { putBoolean("hide_notifications", !settings.hideNotifications) }
+                                        }
+                                    }
+                                )
+                                QuickFeatureTile(
+                                    modifier = Modifier.weight(1f),
+                                    title = "Uninstall Guard",
+                                    subtitle = if (deviceAdminActive) "Admin + Lock active" else if (settings.uninstallProtection) "Installer locked" else "Tap to enable",
+                                    active = settings.uninstallProtection || deviceAdminActive,
+                                    onClick = {
+                                        val next = !settings.uninstallProtection
+                                        app.config.prefs.edit { putBoolean("uninstall_protection", next) }
+                                        if (next && !deviceAdminActive) requestDeviceAdmin()
+                                    }
+                                )
+                            }
+                        }
                         item(key = "app-search") {
                             Text(if (tab == 0) "Your locked apps" else "Choose apps to lock", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                             Spacer(Modifier.height(8.dp))
@@ -299,7 +442,7 @@ class MainActivity : FragmentActivity() {
                         val suggested = rows.filter { it.pkg !in selected && suggestedCategory(it.pkg) != null }
                         if (search.isBlank() && suggested.isNotEmpty() && (tab == 1 || selected.isEmpty())) item(key = "suggestions") {
                             var expanded by remember { mutableStateOf(false) }
-                            LockerCard("Suggested apps") {
+                            LockerCard("Suggested apps", subtitle = "Recommended privacy-sensitive apps on this phone") {
                                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     suggested.take(if (expanded) 8 else 4).forEach { row ->
                                         AssistChip(onClick = { if (authorized) app.config.toggle(row.pkg, true) },
@@ -321,25 +464,35 @@ class MainActivity : FragmentActivity() {
                             }
                         }
                         items(filtered, key = { it.pkg }) { row ->
+                            val isLocked = row.pkg in selected
+                            val hiddenForApp = hiddenMap[row.pkg] ?: 0
                             Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp),
                                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Row(Modifier.weight(1f).toggleable(value = row.pkg in selected, role = Role.Switch, onValueChange = { value ->
+                                    Row(Modifier.weight(1f).toggleable(value = isLocked, role = Role.Switch, onValueChange = { value ->
                                         if (authorized) {
                                             app.config.toggle(row.pkg, value)
                                             scope.launch { snack.currentSnackbarData?.dismiss(); snack.showSnackbar(if (value) "${row.label} moved to Locked" else "${row.label} moved to Unlocked") }
                                         }
                                     }).clearAndSetSemantics {
                                         contentDescription = "Lock ${row.label}, ${row.pkg}"
-                                        stateDescription = if (row.pkg in selected) "Locked" else "Not locked"
-                                        toggleableState = ToggleableState(row.pkg in selected); role = Role.Switch
+                                        stateDescription = if (isLocked) "Locked" else "Not locked"
+                                        toggleableState = ToggleableState(isLocked); role = Role.Switch
                                     }.padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .4f)) { Image(row.icon.asImageBitmap(), null, Modifier.padding(6.dp).size(32.dp)) }
-                                        Column(Modifier.weight(1f)) {
+                                        Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .45f)) { Image(row.icon.asImageBitmap(), null, Modifier.padding(6.dp).size(34.dp)) }
+                                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                             Text(row.label, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                                            Text(if (row.system) "System app" else "Downloaded app", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                Text(appCategoryBadge(row.pkg, row.system), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                if (hiddenForApp > 0) {
+                                                    Surface(shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.primaryContainer) {
+                                                        Text("$hiddenForApp notif hidden", Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
+                                                            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                                                    }
+                                                }
+                                            }
                                         }
-                                        Switch(checked = row.pkg in selected, onCheckedChange = null)
+                                        Switch(checked = isLocked, onCheckedChange = null)
                                     }
                                     if (tab == 0 && !row.system) Box {
                                         var menuOpen by remember(row.pkg) { mutableStateOf(false) }
@@ -357,14 +510,39 @@ class MainActivity : FragmentActivity() {
                         }
                         item { Text("Launcher apps on this profile. Essential recovery apps stay available.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                     } else {
-                    item { LockerCard("Setup & permissions") {
+                    item { LockerCard("Setup & permissions", badge = if (active) "Active" else "Action Needed") {
                         Text("Accessibility: ${if (accessibilityEnabled()) "enabled" else "not enabled"}; service: ${if (Health.connected.value) "connected" else "disconnected"}")
                         Text("Window access identifies app packages only. No screen text, passwords, or child views are read. An opaque accessibility overlay covers locked apps.")
                         Button(onClick = { launchSettings(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }) { Text("Open accessibility settings") }
                         Text("For a sideloaded APK: Settings → Apps → Sam App Locker → ⋮ → Allow restricted settings, if offered. Then enable the installed accessibility service. Keep Play Protect enabled.")
-                        Text("No usage access, draw-over-apps access, notification permission, device admin, or foreground service is required.")
                     } }
-                    item { LockerCard("Authentication") {
+                    item { LockerCard("Notification privacy", subtitle = "Hide status-bar & lock-screen notifications for locked apps", badge = if (settings.hideNotifications && notificationAccessGranted) "Protected" else "Off") {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Hide notifications for locked apps", style = MaterialTheme.typography.titleMedium)
+                                Text("Automatically suppresses incoming and active notifications from locked apps while they are not unlocked in the foreground.", style = MaterialTheme.typography.bodySmall)
+                            }
+                            Switch(checked = settings.hideNotifications, onCheckedChange = { enabled ->
+                                if (authorized) {
+                                    app.config.prefs.edit { putBoolean("hide_notifications", enabled) }
+                                    if (enabled && !notificationAccessGranted) {
+                                        launchSettings(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                                    }
+                                }
+                            })
+                        }
+                        Text("Notification access: ${if (notificationAccessGranted) "enabled" else "not enabled"}; listener: ${if (NotificationHealth.connected.value) "connected" else "disconnected"} • Hidden this session: $totalHidden",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = { launchSettings(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }) {
+                                Text(if (notificationAccessGranted) "Manage notification access" else "Grant notification access")
+                            }
+                            if (totalHidden > 0) {
+                                TextButton(onClick = { NotificationHealth.reset() }) { Text("Reset counter") }
+                            }
+                        }
+                    } }
+                    item { LockerCard("Authentication", badge = app.vault.kind().label) {
                         val strong = BiometricManager.from(this@MainActivity).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG)
                         Text(if (strong == BiometricManager.BIOMETRIC_SUCCESS) "Strong biometric available. Fingerprint opens first; other methods are hidden in the three-dot menu." else "Strong biometric unavailable or not enrolled. Use your chosen app credential.")
                         Text("Face unlock is offered only if Android exposes it as a strong biometric. Many Samsung face configurations do not qualify.")
@@ -374,6 +552,20 @@ class MainActivity : FragmentActivity() {
                                 Text("Unlock after the last digit. Turn off to require Continue.", style = MaterialTheme.typography.bodySmall)
                             }
                             Switch(checked = settings.autoPin, onCheckedChange = { if (authorized) app.config.prefs.edit { putBoolean("auto_pin", it) } })
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Hide pattern trail", style = MaterialTheme.typography.titleMedium)
+                                Text("Stealth pattern mode: hides drawn lines and dot highlights on the lock screen.", style = MaterialTheme.typography.bodySmall)
+                            }
+                            Switch(checked = settings.hidePatternTrail, onCheckedChange = { if (authorized) app.config.prefs.edit { putBoolean("hide_pattern", it) } })
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Scramble PIN keypad", style = MaterialTheme.typography.titleMedium)
+                                Text("Randomizes digit positions on the PIN pad each time to prevent shoulder surfing.", style = MaterialTheme.typography.bodySmall)
+                            }
+                            Switch(checked = settings.scramblePin, onCheckedChange = { if (authorized) app.config.prefs.edit { putBoolean("scramble_pin", it) } })
                         }
                         Text("Current fallback: ${app.vault.kind().label}", style = MaterialTheme.typography.titleMedium)
                         TextButton(onClick = { if (authorized) { enrollmentKind = app.vault.kind(); changingCredential = true; enrolled = false; authorized = false; confirmation = false; error = "" } }) { Text("Change PIN, pattern or password") }
@@ -394,6 +586,35 @@ class MainActivity : FragmentActivity() {
                             Text("Shared session (less private)", Modifier.padding(start = 12.dp))
                         }
                         Text("Default: authenticate each app separately. Screen off and service/process restart always clear every session.")
+                    } }
+                    item { LockerCard("Uninstall protection", badge = if (settings.uninstallProtection || deviceAdminActive) "Protected" else "Standard") {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Lock package uninstaller & admin settings", style = MaterialTheme.typography.titleMedium)
+                                Text("Covers Android's package uninstaller with your lock screen and blocks unauthenticated Device Admin deactivation.", style = MaterialTheme.typography.bodySmall)
+                            }
+                            Switch(checked = settings.uninstallProtection, onCheckedChange = { enabled ->
+                                if (authorized) {
+                                    app.config.prefs.edit { putBoolean("uninstall_protection", enabled) }
+                                }
+                            })
+                        }
+                        Text("Device Admin status: ${if (deviceAdminActive) "active (blocks launcher & system uninstall of Sam App Locker)" else "not active"}",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            if (!deviceAdminActive) {
+                                Button(onClick = { requestDeviceAdmin() }) { Text("Enable Device Admin") }
+                            } else {
+                                OutlinedButton(onClick = {
+                                    if (authorized) {
+                                        LockerDeviceAdminReceiver.disableIfActive(this@MainActivity)
+                                        deviceAdminActive = false
+                                    }
+                                }) { Text("Disable Device Admin") }
+                            }
+                            TextButton(onClick = { launchSelfUninstall() }) { Text("Uninstall Sam App Locker\u2026") }
+                        }
+                        Text("In-app confirmation · Always on: Uninstall from the Locked tab requires fresh fingerprint or PIN authentication before Android’s confirmation.", style = MaterialTheme.typography.bodySmall)
                     } }
                     item { LockerCard("Samsung battery setup") {
                         Text("Settings → Apps → Sam App Locker → Battery → Unrestricted, if available. Under Battery → Background usage limits, remove this app from Sleeping and Deep sleeping apps; add it to Never sleeping apps if offered. Labels vary by One UI build.")
@@ -425,17 +646,9 @@ class MainActivity : FragmentActivity() {
                         }
                         TextButton(onClick = { showLog = !showLog }) { Text(if (showLog) "Hide diagnostics" else "View local diagnostics") }
                         if (showLog) Text(Diagnostics.text(), style = MaterialTheme.typography.bodySmall)
-                        Text("Notifications, widgets, Recents thumbnails and external displays are separate exposure surfaces. This app does not secure them.")
+                        Text("Widgets, Recents thumbnails and external displays are separate exposure surfaces.")
                         Text("Based on AppLock • © 2023–2025 Pranav Purwar • MIT License", style = MaterialTheme.typography.labelSmall)
                     } }
-                        item { LockerCard("Uninstall protection") {
-                            Text("In-app confirmation · Always on", style = MaterialTheme.typography.titleSmall)
-                            Text("Uninstall from the Locked tab requires fresh fingerprint or PIN authentication before Android’s confirmation.")
-                            Text("System-wide blocking · Unavailable", style = MaterialTheme.typography.titleSmall)
-                            Text("Samsung Settings, the launcher and other tools can still remove locked apps without this app’s PIN.")
-                            Text("Sam App Locker removal · Not blocked", style = MaterialTheme.typography.titleSmall)
-                            Text("This installation cannot prevent its own removal, force-stop or accessibility disablement. Uninstall blocking requires separate managed-device provisioning; there is no ordinary permission switch that enables it.")
-                        } }
                     }
                 }
             }

@@ -83,6 +83,14 @@ class LockEngineTest {
         val old = engine(); old.windows(setOf("a")); old.authenticate(old.challenge!!, true)
         val fresh = engine(); fresh.windows(setOf("a")); assertTrue(fresh.shieldRequired)
     }
+    @Test fun preferredPackageIsPrioritizedDuringTransitionOverlap() {
+        val e = engine()
+        e.windows(setOf("a", "b"), preferred = "b")
+        assertTrue(e.shieldRequired)
+        assertEquals("b", e.challenge!!.packageName)
+        assertTrue(e.authenticate(e.challenge!!, true))
+        assertEquals("a", e.challenge!!.packageName)
+    }
     @Test fun oneHundredDeterministicSwitchCycles() {
         val e = engine()
         repeat(100) {

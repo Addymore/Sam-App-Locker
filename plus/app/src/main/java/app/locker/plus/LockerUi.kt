@@ -1,12 +1,9 @@
 package app.locker.plus
 
-import android.os.Build
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -14,22 +11,32 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
-@Composable fun LockerCard(title: String, content: @Composable ColumnScope.() -> Unit) {
+@Composable fun LockerCard(title: String, subtitle: String? = null, badge: String? = null, content: @Composable ColumnScope.() -> Unit) {
     Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(28.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Column(Modifier.weight(1f)) {
+                    Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    if (subtitle != null) {
+                        Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                if (badge != null) {
+                    Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.primaryContainer) {
+                        Text(badge, Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
             content()
         }
     }
@@ -68,11 +75,13 @@ import androidx.compose.ui.unit.dp
     LockerBackground {
         Column(Modifier.fillMaxSize().safeDrawingPadding().padding(32.dp),
             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-            PrivacyMark(fingerprint = true, modifier = Modifier.size(80.dp))
-            Spacer(Modifier.height(28.dp))
-            Text("Your privacy, protected", style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
-            Spacer(Modifier.height(12.dp))
-            Text(appName, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+            Surface(shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f)) {
+                PrivacyMark(fingerprint = true, modifier = Modifier.padding(18.dp).size(64.dp))
+            }
+            Spacer(Modifier.height(24.dp))
+            Text("Your privacy, protected", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
+            Spacer(Modifier.height(10.dp))
+            Text(appName, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
         }
     }
 }
@@ -81,6 +90,7 @@ import androidx.compose.ui.unit.dp
     identity: Any? = title, preferPin: Boolean = false, autoPinLength: Int = 0,
     biometricActive: Boolean = false, optionsRequest: Int = 0,
     credentialKind: CredentialKind = CredentialKind.PIN, onKindChange: ((CredentialKind) -> Unit)? = null,
+    hidePatternTrail: Boolean = false, scramblePin: Boolean = false,
     onPin: (CharArray, () -> Unit) -> Unit, onBiometric: (() -> Unit)? = null,
     onCredentialSelected: () -> Unit = {}, onHome: (() -> Unit)? = null, exitLabel: String = "Return home", onPinVisibility: (Boolean) -> Unit = {}) {
     var busy by remember(identity, credentialKind) { mutableStateOf(false) }
@@ -99,7 +109,8 @@ import androidx.compose.ui.unit.dp
             Column(Modifier.widthIn(max = 440.dp).fillMaxWidth().verticalScroll(rememberScrollState()).padding(20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("SAM APP LOCKER", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                    Text("SAM APP LOCKER", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                     if (onBiometric != null && onKindChange == null) Box {
                         IconButton(onClick = { menuOpen = true }, enabled = !busy,
                             modifier = Modifier.semantics { contentDescription = "More unlock options" }) {
@@ -130,7 +141,14 @@ import androidx.compose.ui.unit.dp
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
                 if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                 // Hidden inputs are removed from composition, including keyboard and semantics.
-                if (showCredential) CredentialInput(credentialKind, identity, enabled && !busy, autoPinLength) { value ->
+                if (showCredential) CredentialInput(
+                    kind = credentialKind,
+                    identity = identity,
+                    enabled = enabled && !busy,
+                    autoPinLength = autoPinLength,
+                    hidePatternTrail = hidePatternTrail && onKindChange == null,
+                    scramblePin = scramblePin && onKindChange == null
+                ) { value ->
                     if (!busy && enabled) { busy = true; onPin(value) { busy = false } } else value.fill('\u0000')
                 }
                 onBiometric?.let { action ->

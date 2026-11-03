@@ -9,7 +9,6 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.ComposeView
-import androidx.core.view.isEmpty
 import androidx.lifecycle.*
 import androidx.savedstate.*
 
@@ -44,8 +43,6 @@ class PrivacyShield(private val service: LockerService) : LifecycleOwner, ViewMo
             super.dispatchDraw(canvas)
             if (!measured) {
                 measured = true; Diagnostics.record("shield_draw_submitted", SystemClock.elapsedRealtime() - receipt)
-                // Submit the opaque native backing frame before first Compose composition.
-                if (isEmpty()) post { if (isEmpty() && attached) addView(compose, LayoutParams(-1, -1)) }
             }
         }
         override fun dispatchKeyEvent(event: KeyEvent): Boolean {
@@ -61,17 +58,33 @@ class PrivacyShield(private val service: LockerService) : LifecycleOwner, ViewMo
             // A WindowManager removal destroys the window's recomposer/input scope.
             // Never retain that composition across distinct overlay windows.
             setViewCompositionStrategy(androidx.compose.ui.platform.ViewCompositionStrategy.DisposeOnDetachedFromWindowOrReleasedFromPool)
-            setContent { LockerTheme(appearance = service.app.config.state.value.appearance, haptics = service.app.config.state.value.haptics) {
-                val current = token.value
-                AuthPanel(title = if (uncertain.value) "Window cannot be verified" else "App is locked", subtitle = if (current == null) "Return home and open the app in full screen." else appLabel.value.ifEmpty { current.packageName },
-                    error = message.value, enabled = current != null && !uncertain.value, identity = current,
-                    onPin = { pin, done -> current?.let { service.verifyPin(it, pin) { answer -> if (token.value == current) message.value = answer; done() } } ?: done() },
-                    preferPin = pinFallback.value, biometricActive = biometricActive.value, optionsRequest = optionsRequest.intValue, credentialKind = service.app.vault.kind(),
-                    autoPinLength = if (service.app.config.state.value.autoPin) service.app.vault.pinLength() else 0,
-                    onCredentialSelected = { current?.let(service::chooseCredential) },
-                    onBiometric = if (service.biometricAvailable) ({ current?.let(service::biometric) }) else null, onHome = service::home, onPinVisibility = ::setPinFocus)
-            } }
+            setContent {
+                val uiState = service.app.config.state.value
+                LockerTheme(appearance = uiState.appearance, haptics = uiState.haptics) {
+                    val current = token.value
+                    AuthPanel(
+                        title = if (uncertain.value) "Window cannot be verified" else "App is locked",
+                        subtitle = if (current == null) "Return home and open the app in full screen." else appLabel.value.ifEmpty { current.packageName },
+                        error = message.value,
+                        enabled = current != null && !uncertain.value,
+                        identity = current,
+                        onPin = { pin, done -> current?.let { service.verifyPin(it, pin) { answer -> if (token.value == current) message.value = answer; done() } } ?: done() },
+                        preferPin = pinFallback.value,
+                        biometricActive = biometricActive.value,
+                        optionsRequest = optionsRequest.intValue,
+                        credentialKind = service.app.vault.kind(),
+                        autoPinLength = if (uiState.autoPin) service.app.vault.pinLength() else 0,
+                        hidePatternTrail = uiState.hidePatternTrail,
+                        scramblePin = uiState.scramblePin,
+                        onCredentialSelected = { current?.let(service::chooseCredential) },
+                        onBiometric = if (service.biometricAvailable) ({ current?.let(service::biometric) }) else null,
+                        onHome = service::home,
+                        onPinVisibility = ::setPinFocus
+                    )
+                }
+            }
         }
+        frame.addView(compose, FrameLayout.LayoutParams(-1, -1))
     }
     fun refreshAppearance() {
         frame.setBackgroundColor(service.shieldBackground().toArgb())
@@ -84,11 +97,14 @@ class PrivacyShield(private val service: LockerService) : LifecycleOwner, ViewMo
         val changed = token.value != challenge
         if (challenge != null && presentedPackage != challenge.packageName) {
             presentedPackage = challenge.packageName
-            message.value = ""; appLabel.value = ""; pinFallback.value = false; biometricActive.value = false; optionsRequest.intValue = 0
+            message.value = ""; appLabel.value = ""; pinFallback.value = false; optionsRequest.intValue = 0
+            biometricActive.value = !unknown && service.shouldStartInBiometricMode(challenge)
             service.app.io.execute {
                 val label = runCatching { service.packageManager.getApplicationLabel(service.packageManager.getApplicationInfo(challenge.packageName, 0)).toString() }.getOrDefault(challenge.packageName)
                 android.os.Handler(service.mainLooper).post { if (token.value == challenge) appLabel.value = label }
             }
+        } else if (unknown) {
+            biometricActive.value = false
         }
         token.value = challenge; uncertain.value = unknown
         if (attached) {
@@ -113,8 +129,7 @@ class PrivacyShield(private val service: LockerService) : LifecycleOwner, ViewMo
                     awaitingFirstFrame = false
                     Diagnostics.record(if (eventOrigin) "shield_event_frame_committed" else "shield_scan_frame_committed", duration)
                     service.onShieldFrameCommitted()
-                    // Reconcile queued window evidence before requesting authentication.
-                    frame.post { if (attached && challenge != null && token.value == challenge && !uncertain.value) service.shieldReady(challenge) }
+                    if (token.value != null && !uncertain.value) service.shieldReady(token.value!!)
                 }
             }
         }
@@ -162,8 +177,6 @@ class PrivacyShield(private val service: LockerService) : LifecycleOwner, ViewMo
         // that callback never tries to update a WindowManager view being removed.
         attached = false; awaitingFirstFrame = false; hasWindowFocus = false
         wm.removeViewImmediate(frame)
-        // Next attachment must submit the native opaque backing before rebuilding UI.
-        frame.removeView(compose)
         compose.disposeComposition()
         val finishers = removalActions.toList(); removalActions.clear()
         finishers.forEach { it() }

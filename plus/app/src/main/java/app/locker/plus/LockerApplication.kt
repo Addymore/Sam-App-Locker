@@ -20,8 +20,40 @@ class Config(context: Context) {
     val prefs = context.getSharedPreferences("plus-settings", Context.MODE_PRIVATE)
     private val locked = dev.pranav.applock.data.repository.LockedAppsRepository(context)
     private val appPrefs = context.getSharedPreferences("app_lock_prefs", Context.MODE_PRIVATE)
-    data class UiState(val apps: Set<String>, val rule: LockEngine.Rule, val seconds: Int, val shared: Boolean, val dynamic: Boolean, val autoPin: Boolean, val appearance: Appearance, val biometrics: Boolean, val haptics: Boolean, val bright: Boolean, val logging: Boolean)
-    private fun snapshot() = UiState(apps(), rule(), seconds(), shared(), dynamic(), autoPin(), appearance(), prefs.getBoolean("biometrics", true), prefs.getBoolean("haptics", true), prefs.getBoolean("bright", false), prefs.getBoolean("logging", true))
+    data class UiState(
+        val apps: Set<String>,
+        val rule: LockEngine.Rule,
+        val seconds: Int,
+        val shared: Boolean,
+        val dynamic: Boolean,
+        val autoPin: Boolean,
+        val appearance: Appearance,
+        val biometrics: Boolean,
+        val haptics: Boolean,
+        val bright: Boolean,
+        val logging: Boolean,
+        val hideNotifications: Boolean,
+        val uninstallProtection: Boolean,
+        val hidePatternTrail: Boolean,
+        val scramblePin: Boolean
+    )
+    private fun snapshot() = UiState(
+        apps = apps(),
+        rule = rule(),
+        seconds = seconds(),
+        shared = shared(),
+        dynamic = dynamic(),
+        autoPin = autoPin(),
+        appearance = appearance(),
+        biometrics = prefs.getBoolean("biometrics", true),
+        haptics = prefs.getBoolean("haptics", true),
+        bright = prefs.getBoolean("bright", false),
+        logging = prefs.getBoolean("logging", true),
+        hideNotifications = hideNotifications(),
+        uninstallProtection = uninstallProtection(),
+        hidePatternTrail = hidePatternTrail(),
+        scramblePin = scramblePin()
+    )
     val state = mutableStateOf(snapshot())
     private val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ -> state.value = snapshot(); Diagnostics.enabled = state.value.logging }
     init { Diagnostics.enabled = state.value.logging; prefs.registerOnSharedPreferenceChangeListener(listener); appPrefs.registerOnSharedPreferenceChangeListener(listener) }
@@ -46,6 +78,10 @@ class Config(context: Context) {
     fun shared() = prefs.getBoolean("shared", false)
     fun autoPin() = prefs.getBoolean("auto_pin", true)
     fun dynamic() = prefs.getBoolean("dynamic", true)
+    fun hideNotifications() = prefs.getBoolean("hide_notifications", false)
+    fun uninstallProtection() = prefs.getBoolean("uninstall_protection", false)
+    fun hidePatternTrail() = prefs.getBoolean("hide_pattern", false)
+    fun scramblePin() = prefs.getBoolean("scramble_pin", false)
 }
 
 object Health {

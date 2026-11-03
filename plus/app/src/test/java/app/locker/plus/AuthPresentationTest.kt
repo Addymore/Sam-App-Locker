@@ -26,7 +26,21 @@ class AuthPresentationTest {
     }
     @Test fun invalidPersistedAppearanceUsesSafeDefaults() {
         assertEquals(VisualStyle.MATERIAL, savedEnum("removed-style", VisualStyle.MATERIAL))
+        assertEquals(VisualStyle.ZENZY_VIP, savedEnum("ZENZY_VIP", VisualStyle.MATERIAL))
+        assertEquals(VisualStyle.AMOLED, savedEnum("AMOLED", VisualStyle.MATERIAL))
         assertEquals(ColorMode.SYSTEM, savedEnum(null, ColorMode.SYSTEM))
         assertEquals(Backdrop.OCEAN, savedEnum("OCEAN", Backdrop.PLAIN))
+        assertEquals(Backdrop.MIDNIGHT, savedEnum("MIDNIGHT", Backdrop.PLAIN))
+    }
+    @Test fun biometricAttemptGateCanTakeDoesNotConsumeToken() {
+        val gate = BiometricAttemptGate()
+        val c1 = LockEngine.Challenge("app.one", 1L)
+        assertTrue(gate.canTake(c1))
+        assertTrue(gate.canTake(c1))
+        assertTrue(gate.take(c1))
+        assertFalse(gate.canTake(c1))
+        assertFalse(gate.take(c1))
+        gate.retainVisible(emptySet())
+        assertTrue(gate.canTake(c1))
     }
 }
