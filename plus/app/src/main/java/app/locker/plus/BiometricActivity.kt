@@ -70,6 +70,8 @@ class BiometricActivity : FragmentActivity() {
     }
 
     private fun bindChallengeIntent(intent: Intent) {
+        window.decorView.alpha = 1f
+        window.decorView.visibility = android.view.View.VISIBLE
         window.setBackgroundDrawable(shieldBackground().toArgb().toDrawable())
         completed = false
         handoffScheduled = false
@@ -130,6 +132,9 @@ class BiometricActivity : FragmentActivity() {
         if (completed) return
         completed = true
         val finishHost = {
+            window.setBackgroundDrawable(android.graphics.Color.TRANSPARENT.toDrawable())
+            window.decorView.alpha = 0f
+            window.decorView.visibility = android.view.View.INVISIBLE
             finish()
             overrideActivityTransition(OVERRIDE_TRANSITION_CLOSE, 0, 0)
             @Suppress("DEPRECATION") overridePendingTransition(0, 0)

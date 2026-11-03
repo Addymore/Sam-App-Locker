@@ -47,7 +47,8 @@ class SystemPanelPolicyTest {
     }
     @Test fun timeoutAndScreenLockStillInvalidateSession() {
         val e = engine(LockEngine.Rule.TIMEOUT); e.windows(setOf("private")); e.authenticate(e.challenge!!, true)
-        time = 15_000; shade(e); assertTrue(e.shieldRequired)
+        e.windows(emptySet())
+        time = 15_000; e.windows(setOf("private")); shade(e); assertTrue(e.shieldRequired)
         e.authenticate(e.challenge!!, true); e.screenLocked(); e.windows(setOf("private")); assertTrue(e.shieldRequired)
     }
     @Test fun sharedSessionPreservedButNewProtectedAppStillLocksPerApp() {

@@ -14,6 +14,7 @@ class LockEngine(private val now: () -> Long) {
     var shared = false; private set
     private var generation = 0L
     private val sessions = mutableMapOf<String, Long>()
+    private val backgroundSince = mutableMapOf<String, Long>()
     val shieldRequired get() = connected && (uncertain || challenge != null)
     fun isAuthenticated(pkg: String): Boolean = connected && pkg in protectedApps && valid(pkg)
 
@@ -43,22 +44,52 @@ class LockEngine(private val now: () -> Long) {
     fun authenticate(token: Challenge, success: Boolean): Boolean {
         reconcile()
         if (!success || !connected || uncertain || token != challenge || token.packageName !in visible) return false
-        sessions[if (shared) "*" else token.packageName] = now()
+        val key = if (shared) "*" else token.packageName
+        sessions[key] = now()
+        backgroundSince.remove(key)
         challenge = null; generation++; reconcile()
         return true
     }
     fun invalidateChallenge() { challenge = null; generation++; reconcile() }
-    fun nextExpiry(): Long? = if (rule == Rule.TIMEOUT) sessions.values.minOrNull()?.plus(timeoutMs) else null
-    private fun resetSessions() { sessions.clear(); challenge = null; generation++ }
+    fun nextExpiry(): Long? = if (rule == Rule.TIMEOUT) backgroundSince.values.minOrNull()?.plus(timeoutMs) else null
+    private fun resetSessions() { sessions.clear(); backgroundSince.clear(); challenge = null; generation++ }
+    private fun isSessionActiveInForeground(key: String): Boolean =
+        if (key == "*") visible.any { it in protectedApps } else key in visible
     private fun valid(pkg: String): Boolean {
         val key = if (shared) "*" else pkg
-        val start = sessions[key] ?: return false
-        if (rule == Rule.TIMEOUT && now() - start >= timeoutMs) { sessions.remove(key); return false }
+        if (key !in sessions) return false
+        if (rule == Rule.TIMEOUT) {
+            val exitedAt = backgroundSince[key]
+            if (exitedAt != null && now() - exitedAt >= timeoutMs) {
+                sessions.remove(key)
+                backgroundSince.remove(key)
+                return false
+            }
+        }
         return true
     }
     private fun reconcile(preferred: String? = null) {
         if (!connected) return
-        if (rule == Rule.TIMEOUT) sessions.entries.removeAll { now() - it.value >= timeoutMs }
+        if (rule == Rule.TIMEOUT) {
+            val currentTime = now()
+            val iterator = sessions.keys.iterator()
+            while (iterator.hasNext()) {
+                val key = iterator.next()
+                val exitedAt = backgroundSince[key]
+                if (exitedAt != null && currentTime - exitedAt >= timeoutMs) {
+                    iterator.remove()
+                    backgroundSince.remove(key)
+                } else if (isSessionActiveInForeground(key)) {
+                    backgroundSince.remove(key)
+                    sessions[key] = currentTime
+                } else {
+                    backgroundSince.putIfAbsent(key, currentTime)
+                }
+            }
+            backgroundSince.keys.retainAll(sessions.keys)
+        } else {
+            backgroundSince.clear()
+        }
         val locked = visible.filter { it in protectedApps && !valid(it) }.sorted()
         val nextTarget = if (preferred != null && preferred in locked) preferred
             else if (challenge?.packageName in locked) challenge?.packageName

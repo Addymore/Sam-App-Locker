@@ -32,7 +32,40 @@ class LockEngineTest {
     }
     @Test fun timeoutBoundary() {
         val e = engine(LockEngine.Rule.TIMEOUT); e.windows(setOf("a")); e.authenticate(e.challenge!!, true)
-        time = 14_999; e.tick(); assertFalse(e.shieldRequired); time = 15_000; e.tick(); assertTrue(e.shieldRequired)
+        e.windows(emptySet())
+        time = 14_999; e.tick(); e.windows(setOf("a")); assertFalse(e.shieldRequired)
+        e.windows(emptySet())
+        time = 29_999; e.tick(); assertFalse(e.shieldRequired)
+        time = 30_000; e.tick(); e.windows(setOf("a")); assertTrue(e.shieldRequired)
+    }
+    @Test fun activeForegroundSessionDoesNotExpireDuringVideoPlayback() {
+        val e = engine(LockEngine.Rule.TIMEOUT)
+        e.windows(setOf("a"))
+        assertTrue(e.authenticate(e.challenge!!, true))
+        assertNull(e.nextExpiry())
+        // Simulate watching a 10-minute video while timeout is 15 seconds:
+        for (t in listOf(15_000L, 60_000L, 300_000L, 600_000L)) {
+            time = t
+            e.tick()
+            e.windows(setOf("a"))
+            assertFalse(e.shieldRequired)
+            assertTrue(e.isAuthenticated("a"))
+            assertNull(e.nextExpiry())
+        }
+        // Once the user actually leaves the app, the timeout countdown starts from the exit time:
+        e.windows(emptySet())
+        assertEquals(615_000L, e.nextExpiry())
+        time = 614_999L
+        e.windows(setOf("a"))
+        assertFalse(e.shieldRequired)
+        e.windows(emptySet())
+        time = 629_998L
+        assertTrue(e.isAuthenticated("a"))
+        time = 629_999L
+        e.tick()
+        assertFalse(e.isAuthenticated("a"))
+        e.windows(setOf("a"))
+        assertTrue(e.shieldRequired)
     }
     @Test fun expiredBackgroundSessionDoesNotScheduleBusyLoop() {
         val e = engine(LockEngine.Rule.TIMEOUT); e.windows(setOf("a")); e.authenticate(e.challenge!!, true); e.windows(emptySet())
@@ -76,6 +109,7 @@ class LockEngineTest {
         assertTrue(e.isAuthenticated("a"))
         assertFalse(e.isAuthenticated("b"))
         assertFalse(e.isAuthenticated("unprotected"))
+        e.windows(emptySet())
         time = 15_000
         assertFalse(e.isAuthenticated("a"))
     }

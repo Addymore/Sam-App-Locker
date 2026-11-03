@@ -48,6 +48,7 @@ class LockerService : AccessibilityService() {
     private var postAuthPackage: String? = null
     private var postAuthUntil = 0L
     private var goingHomeUntil = 0L
+    private var enteringProtectedUntil = 0L
     private var lastUnlockedExitPackage: String? = null
     private var lastUnlockedExitUntil = 0L
     @Volatile private var protectedUninstallTargets = setOf("sam app locker", "app.sam.locker", "app.sam.locker.debug")
@@ -120,7 +121,7 @@ class LockerService : AccessibilityService() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == Intent.ACTION_SCREEN_OFF) {
                 evidence.clear(); windowOwners.clear(); confirmedProtectedWindow = null; pendingForeground = null
-                postAuthPackage = null; postAuthUntil = 0L; goingHomeUntil = 0L
+                postAuthPackage = null; postAuthUntil = 0L; goingHomeUntil = 0L; enteringProtectedUntil = 0L
                 lastUnlockedExitPackage = null; lastUnlockedExitUntil = 0L
                 activeProtectedInstaller = null; authenticating = null
                 automaticBiometric.clear()
@@ -243,7 +244,7 @@ class LockerService : AccessibilityService() {
         if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && event.eventType != AccessibilityEvent.TYPE_WINDOWS_CHANGED) return
         if (deviceUnavailable()) {
             evidence.clear(); windowOwners.clear(); confirmedProtectedWindow = null; pendingForeground = null
-            postAuthPackage = null; postAuthUntil = 0L; goingHomeUntil = 0L
+            postAuthPackage = null; postAuthUntil = 0L; goingHomeUntil = 0L; enteringProtectedUntil = 0L
             lastUnlockedExitPackage = null; lastUnlockedExitUntil = 0L
             activeProtectedInstaller = null; authenticating = null
             automaticBiometric.clear()
@@ -254,6 +255,11 @@ class LockerService : AccessibilityService() {
             event.windowChanges and AccessibilityEvent.WINDOWS_CHANGE_REMOVED != 0 &&
             event.windowId >= 0) windowOwners.removed(event.windowId)
         val received = SystemClock.elapsedRealtime()
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED &&
+            received < goingHomeUntil && evidence.foreground in homes &&
+            !shield.isAttached && authenticating == null) {
+            return
+        }
         val pkg = event.packageName?.toString()
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && pkg != null) {
             if (pkg == "com.android.settings" && app.config.uninstallProtection() && received >= authorizedUninstallUntil) {
@@ -267,12 +273,16 @@ class LockerService : AccessibilityService() {
             // Fast-path Home launcher entry to eliminate screen flickering when leaving a locked app to Home.
             if (pkg in homes) {
                 val prev = evidence.foreground
-                if (prev != null && engine.isAuthenticated(prev)) {
+                if (prev != null && prev !in homes && (prev in engine.protectedApps || engine.isAuthenticated(prev))) {
                     lastUnlockedExitPackage = prev
-                    lastUnlockedExitUntil = received + 800L
+                    lastUnlockedExitUntil = received + 2_000L
+                } else if (lastUnlockedExitPackage != null && received < lastUnlockedExitUntil) {
+                    lastUnlockedExitUntil = maxOf(lastUnlockedExitUntil, received + 1_200L)
                 }
-                goingHomeUntil = received + 700L
+                goingHomeUntil = received + 1_500L
+                enteringProtectedUntil = 0L
                 pendingForeground = null
+                transitionFrames = 0
                 confirmedProtectedWindow = null
                 postAuthPackage = null; postAuthUntil = 0L
                 activeProtectedInstaller = null
@@ -285,7 +295,6 @@ class LockerService : AccessibilityService() {
                 engine.windows(emptySet(), false)
                 Diagnostics.record("foreground_home")
                 render(received, eventOrigin = true)
-                queueScan()
                 return
             }
             // Samsung panel events can name Settings without opening its Activity.
@@ -294,10 +303,12 @@ class LockerService : AccessibilityService() {
             if (pkg !in transientPackages && pkg !in keyboards && pkg != packageName) {
                 if (pkg in engine.protectedApps) {
                     goingHomeUntil = 0L
+                    enteringProtectedUntil = received + 500L
                     if (pkg != lastUnlockedExitPackage) {
                         lastUnlockedExitPackage = null; lastUnlockedExitUntil = 0L
                     }
                     pendingForeground = null
+                    transitionFrames = 0
                     if (event.windowId >= 0) windowOwners.owner(event.windowId, AccessibilityWindowInfo.TYPE_APPLICATION, pkg, false)
                     if (postAuthPackage != null && postAuthPackage != pkg) { postAuthPackage = null; postAuthUntil = 0L }
                     val switchedTarget = evidence.foreground != pkg
@@ -315,13 +326,16 @@ class LockerService : AccessibilityService() {
                         render(received, eventOrigin = true)
                     }
                 } else {
+                    if ((received < goingHomeUntil || evidence.foreground in homes) && pkg !in packageInstallers) {
+                        return
+                    }
                     // Window-state events also describe Samsung edge panels and other
                     // system surfaces. Only a verified application window may replace
                     // a protected foreground hint. Validate in the coalesced scan.
                     val prev = evidence.foreground
-                    if (prev != null && engine.isAuthenticated(prev)) {
+                    if (prev != null && (prev in engine.protectedApps || engine.isAuthenticated(prev))) {
                         lastUnlockedExitPackage = prev
-                        lastUnlockedExitUntil = received + 800L
+                        lastUnlockedExitUntil = received + 1_500L
                     }
                     Diagnostics.record("exit_hint_received")
                     pendingForeground = event.windowId to pkg
@@ -338,8 +352,8 @@ class LockerService : AccessibilityService() {
                 }
             }
             if (pkg == packageName && event.className == MainActivity::class.java.name) {
-                goingHomeUntil = 0L
-                pendingForeground = null; postAuthPackage = null; postAuthUntil = 0L
+                goingHomeUntil = 0L; enteringProtectedUntil = 0L
+                pendingForeground = null; transitionFrames = 0; postAuthPackage = null; postAuthUntil = 0L
                 evidence.foregroundEvent(pkg)
                 authenticating = null; biometricHost = null; biometricCover = null
                 automaticBiometric.clear()
@@ -363,7 +377,7 @@ class LockerService : AccessibilityService() {
         val received = SystemClock.elapsedRealtime()
         if (deviceUnavailable()) {
             evidence.clear(); windowOwners.clear(); confirmedProtectedWindow = null; pendingForeground = null
-            postAuthPackage = null; postAuthUntil = 0L; goingHomeUntil = 0L
+            postAuthPackage = null; postAuthUntil = 0L; goingHomeUntil = 0L; enteringProtectedUntil = 0L
             lastUnlockedExitPackage = null; lastUnlockedExitUntil = 0L
             activeProtectedInstaller = null; automaticBiometric.clear()
             engine.screenLocked(); authenticating = null; render(); return
@@ -475,9 +489,27 @@ class LockerService : AccessibilityService() {
                 if (pkg == packageName && window.id in activeApplicationIds) ownActive = true
                 resolvedApplications.add(ForegroundTransition.Window(window.id, pkg))
             }
+            val launcherVisible = resolvedApplications.any { it.pkg in homes }
+            val noActiveProtectedWindow = resolvedApplications.none { it.pkg in engine.protectedApps && it.id in activeApplicationIds }
+            val launcherRevealedOnExit = launcherVisible && noActiveProtectedWindow &&
+                !ownActive && biometricHost == null && received >= enteringProtectedUntil
             val homeActive = received < goingHomeUntil ||
                 pendingForeground?.second in homes ||
-                resolvedApplications.any { it.pkg in homes && it.id in activeApplicationIds }
+                resolvedApplications.any { it.pkg in homes && it.id in activeApplicationIds } ||
+                launcherRevealedOnExit
+            if (homeActive) {
+                val prev = evidence.foreground
+                if (prev != null && prev !in homes && (prev in engine.protectedApps || engine.isAuthenticated(prev))) {
+                    lastUnlockedExitPackage = prev
+                    lastUnlockedExitUntil = maxOf(lastUnlockedExitUntil, received + 2_000L)
+                }
+                if (launcherRevealedOnExit && evidence.foreground !in homes) {
+                    goingHomeUntil = maxOf(goingHomeUntil, received + 1_500L)
+                    homes.firstOrNull()?.let { evidence.foregroundEvent(it) }
+                }
+                pendingForeground = null
+                transitionFrames = 0
+            }
             // When an active full-screen application window (not our own overlay/host) covers the screen,
             // ignore any inactive window from a different package that is shrinking or animating out behind it.
             val activeExternalFullScreen = resolvedApplications.firstOrNull {
@@ -551,7 +583,7 @@ class LockerService : AccessibilityService() {
             // During biometric handoff Android may omit obscured app windows. Retain the
             // challenge only while our auth Activity owns focus, never on unrelated switches.
             if (ownActive && authenticating != null && !homeActive) packages.addAll(engine.visible)
-            if (appWindowCount == 0 && !panelObscuresApps && !homeActive && evidence.foreground !in homes && evidence.foreground != packageName) incomplete = true
+            if (appWindowCount == 0 && !panelObscuresApps && !homeActive && pendingForeground == null && evidence.foreground !in homes && evidence.foreground != packageName) incomplete = true
             // A token-bound full-screen auth host covers the default display. During
             // its handoff, obscured application roots may legitimately be unavailable.
             val hosting = !homeActive && biometricHost == authenticating && authenticating != null && evidence.foreground == authenticating?.packageName
@@ -739,7 +771,7 @@ class LockerService : AccessibilityService() {
         if (hostAttempts.matches(attempt) && biometricHost == token) {
             biometricDismiss = null
             biometricHost = null; biometricCover = null
-            scan(null)
+            if (!homeObserved) scan(null)
         }
     }
     fun biometricResult(
@@ -781,7 +813,7 @@ class LockerService : AccessibilityService() {
         shield.pinFallback.value = false
         if (!accepted && options) shield.optionsRequest.intValue++
         render()
-        if (goingHome) {
+        if (accepted || goingHome) {
             shield.hide()
             finishHost()
         } else {
@@ -809,9 +841,15 @@ class LockerService : AccessibilityService() {
     fun isCurrent(token: LockEngine.Challenge) = ready && authenticating == token && engine.challenge == token
     fun home() {
         val now = SystemClock.elapsedRealtime()
-        goingHomeUntil = now + 700L
+        val prev = evidence.foreground
+        if (prev != null && prev !in homes && (prev in engine.protectedApps || engine.isAuthenticated(prev))) {
+            lastUnlockedExitPackage = prev
+            lastUnlockedExitUntil = now + 2_000L
+        }
+        goingHomeUntil = now + 1_500L
+        enteringProtectedUntil = 0L
         authenticating = null; biometricHost = null; biometricCover = null
-        pendingForeground = null; confirmedProtectedWindow = null
+        pendingForeground = null; transitionFrames = 0; confirmedProtectedWindow = null
         postAuthPackage = null; postAuthUntil = 0L
         activeProtectedInstaller = null
         automaticBiometric.clear()
@@ -827,7 +865,7 @@ class LockerService : AccessibilityService() {
     override fun onInterrupt() {
         if (!ready) return
         windowOwners.clear()
-        postAuthPackage = null; postAuthUntil = 0L; goingHomeUntil = 0L
+        postAuthPackage = null; postAuthUntil = 0L; goingHomeUntil = 0L; enteringProtectedUntil = 0L
         authenticating = null; engine.configure(engine.protectedApps, engine.rule, engine.timeoutMs, engine.shared)
         Health.interrupted.value = true; Health.detail.value = "Service interrupted; reopen setup"
         Diagnostics.record("service_interrupted"); render()
@@ -836,7 +874,7 @@ class LockerService : AccessibilityService() {
     override fun onDestroy() { shutdown(); super.onDestroy() }
     private fun shutdown() {
         if (!ready) return
-        ready = false; authenticating = null; postAuthPackage = null; postAuthUntil = 0L; goingHomeUntil = 0L
+        ready = false; authenticating = null; postAuthPackage = null; postAuthUntil = 0L; goingHomeUntil = 0L; enteringProtectedUntil = 0L
         windowOwners.clear(); engine.disconnect(); handler.removeCallbacksAndMessages(null)
         android.view.Choreographer.getInstance().removeFrameCallback(transitionFrame)
         transitionFrameQueued = false

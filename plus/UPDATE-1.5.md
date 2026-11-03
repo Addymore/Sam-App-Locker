@@ -1,43 +1,37 @@
-# Update 1.5.1: Zero-Flicker Home Transitions, Scoped Uninstall Guard, Aligned Lock Ticks, and Enforced Fingerprint Priority
+# Update 1.5.2: Foreground-Aware Timeout (No Mid-Video Locking) & Complete One UI 9 Home Transition Flicker Elimination
 
-Version 1.5.1 (`versionCode = 12`, following `1.5.0` / `versionCode = 11`) resolves four key real-world issues verified on Samsung Galaxy A57 (`SM-A576B`, Android 17 / One UI 9):
+Version 1.5.2 (`versionCode = 13`, following `1.5.1` / `versionCode = 12`) resolves two remaining real-world bugs captured in live `SamLocker` / `WindowManager` / `SurfaceFlinger` logs on Samsung Galaxy A57 (`SM-A576B`, Android 17 / One UI 9):
 
-## Root Causes Fixed in 1.5.1
+## Root Causes Fixed in 1.5.2
 
-1. **Eliminated Screen Flickering When Returning from a Locked App to the Home Screen (`LockerService.kt`, `PrivacyShield.kt`, `BiometricActivity.kt`)**
-   - **Root Cause A (Shrinking closing window < 85% bounds)**: During One UI's 300ms Home gesture/button animation, the closing locked app shrinks into its Home screen icon (`bounds < 85%`), while its session was already revoked on Frame 1 under `Rule.ON_EXIT` or its root became `null` during teardown. Previously, `isOccludedExitWindow` required the exiting window to still have full-screen bounds (`window.id in fullScreenWindowIds`), so as soon as the closing window shrank below 85% size, `scan()` treated it as a newly visible locked app and flashed `PrivacyShield` / `BiometricActivity` on top of the Home screen!
-   - **Root Cause B (`biometricResult` re-attaching `PrivacyShield` over Home)**: When swiping Home while `BiometricActivity` was covering a locked app, `BiometricActivity` canceled and called `finishAfterShield(finishHost)`, which re-attached `PrivacyShield` over the Home transition just to remove it 150ms later.
+1. **Foreground-Aware `Rule.TIMEOUT` — Never Locks While Watching a Video or Actively Using an App (`LockEngine.kt`, `LockEngineTest.kt`, `SystemPanelPolicyTest.kt`)**
+   - **Root Cause**: Previously, `LockEngine` measured `Rule.TIMEOUT` strictly from `authenticatedAt` (`now() - authenticatedAt < timeoutMs`) and scheduled `nextExpiry() = sessions.values.minOrNull()?.plus(timeoutMs)` even while the unlocked app remained continuously in the foreground (`visible`). On live logs (`19:46:31.073`, `19:47:30.952`, `19:48:32.550`, `19:49:34.633`), `LockerService.timer` fired every `60.0s` while the user was watching a video in Instagram, revoking the active foreground session and popping up the lock screen mid-video.
    - **Fix**:
-     - Added immediate Home transition detection (`pkg in homes` in `onAccessibilityEvent`, `goingHomeUntil`, and `homeActive` in `scan()`), plus an 800ms closing grace window (`lastUnlockedExitPackage`) for just-unlocked apps exiting to Home or another app.
-     - When `homeActive` is true, `LockerService` immediately dismisses any active `BiometricActivity`, detaches `PrivacyShield` once without re-attaching it in `finishAfterShield`, and ignores all non-active closing/shrinking windows (`< 85%` bounds or `null` root) during the Home animation.
-     - Removed the `window.id in fullScreenWindowIds` requirement on inactive occluded exit windows when an active external full-screen window covers the display.
+     - Added `backgroundSince` tracking in [`LockEngine.kt`](app/src/main/java/app/locker/plus/LockEngine.kt).
+     - While an authenticated app remains visible in the foreground (`isSessionActiveInForeground`), its session stays active indefinitely (`backgroundSince.remove(key)`) and `nextExpiry()` returns `null` so no timer fires during video playback or active reading.
+     - As soon as the user leaves the app (`key !in visible`), `backgroundSince.putIfAbsent(key, currentTime)` starts the timeout countdown from the moment of exit; returning before `timeoutMs` cancels the countdown, and staying away for `>= timeoutMs` expires the session cleanly.
 
-2. **Uninstall Guard Scoped Strictly to Locked Apps & Sam App Locker (`LockerService.kt`, `MainActivity.kt`)**
-   - **Root Cause**: In `1.5.0`, `packageInstallers` (`com.google.android.packageinstaller`, `com.android.packageinstaller`, `com.samsung.android.packageinstaller`) was added unconditionally to `engine.protectedApps`, locking the system uninstaller even when uninstalling an **unlocked** app.
-   - **Fix**: Removed `packageInstallers` from unconditional `guardedPackages`. When a `packageInstallers` window opens while Uninstall Guard is active, `LockerService` inspects the uninstaller dialog's nodes (`isProtectedUninstallWindow`) against `protectedUninstallTargets` (the labels and package names of **Sam App Locker** and the user's **locked apps**).
-     - **Unlocked apps** do not match `protectedUninstallTargets` and can be uninstalled freely with zero interruption.
-     - **Locked apps and Sam App Locker** trigger the lock screen immediately; once authenticated via fingerprint or PIN/Pattern/Password, `authorizeInAppUninstall(20_000L)` is granted so the owner can complete the uninstall.
-
-3. **Aligned Locked App Switches & Checkmark Ticks (`MainActivity.kt`, `LockerUi.kt`)**
-   - **Root Cause**: In the **Locked** tab (`tab == 0`), the trailing `⋮` menu button (`48.dp`) was only rendered for non-system apps (`!row.system`), causing the `Switch` on system apps (Gallery, Messages, Chrome, YouTube, etc.) to sit at the far right edge while non-system apps shifted `48.dp` to the left. Additionally, `Switch` had no inner checkmark (`thumbContent`), and `PrivacyMark` applied `.size(64.dp)` after caller modifiers.
+2. **Eliminated the Remaining Tail-End Fast Flash When Returning from a Locked App to the Home Screen (`LockerService.kt`, `BiometricActivity.kt`)**
+   - **Root Cause A (Two-Stage 746–875ms One UI 9 Home Gesture vs. 700–800ms Grace Windows)**:
+     - Live `WindowManager` / `HoneySpace` / `SamLocker` logs (`19:57:06.680` -> `19:57:07.555` = `875ms`; `19:57:29.066` -> `19:57:29.835` = `769ms`; `19:58:12.243` -> `19:58:13.016` = `773ms`) showed that One UI 9's Home gesture fires **two** `foreground_home` events separated by **746–875ms**:
+       - `foreground_home` #1 fires at `t = 0ms` when `startExistingRecents` starts (`recents_animation_input_consumer` takes focus). Under `Rule.ON_EXIT`, `engine.windows(emptySet(), false)` immediately revokes the exiting app's session at `t = 0ms`.
+       - At `t = ~450ms`, `GoogleDiscoverWindow` (`com.google.android.googlequicksearchbox`) becomes visible alongside the launcher and emits `TYPE_WINDOW_STATE_CHANGED`, which in `1.5.1` triggered `exit_hint_received` (`pendingForeground`) and 15 frames of `Choreographer` `scan(null)` polling.
+       - Because `goingHomeUntil` (`700ms`) and `lastUnlockedExitUntil` (`800ms`) expired **before** the 834–875ms Home animation completed (`foreground_home` #2 when `LauncherActivity` receives focus), for the final **35–75ms** (`800ms` to `875ms`) `homeActive` flipped back to `false` while the closing protected app window was still shrinking into its Home icon—causing a fast 35–75ms flash of `PrivacyShield`!
+   - **Root Cause B (Back-to-Home Revealing `LauncherActivity` 71–153ms Before `foreground_home` & `exit_snapshot_0_0_0_0`)**:
+     - When exiting a locked app to Home via the Back gesture (`19:57:39.404`, `19:57:43.726`), `LauncherActivity` becomes visible in the accessibility window list **91–153ms before** `TYPE_WINDOW_STATE_CHANGED` delivers `foreground_home`, and a transient `appWindowCount == 0` snapshot (`exit_snapshot_0_0_0_0`) during an active `pendingForeground` exit transition set `incomplete = true`.
+   - **Root Cause C (One UI 9's 639ms `TransitionRecord{type=CLOSE}` on `BiometricActivity.finish()`)**:
+     - When `BiometricActivity` finished after authentication or Home dismissal, One UI 9's Shell transition animated the closing `BiometricActivity` window (`#13e4ea4 app.sam.locker/app.locker.plus.BiometricActivity`) for up to `639ms` while its Compose surface was still opaque.
    - **Fix**:
-     - Added a consistent `44.dp` trailing `⋮` action menu to **every** card in the **Locked** tab (`Move to Unlocked`, `App info`, and `Uninstall…` for user apps) so every `Switch` across both system and user apps aligns in a 100% straight vertical column.
-     - Added a custom centered [`SwitchTick`](file:///C:/Users/Administrator/Documents/Codex/2026-10-16/https-github-com-aload0-applock-https/work/AppLock-master/plus/app/src/main/java/app/locker/plus/LockerUi.kt#L45-L57) checkmark inside `Switch(thumbContent = ...)` across all locked app cards and settings toggles, and fixed `PrivacyMark` modifier ordering and checkmark geometry.
-
-4. **Enforced Fingerprint as Primary Unlock Method (`BiometricAttemptGate.kt`, `BiometricActivity.kt`, `LockerService.kt`, `PrivacyShield.kt`, `MainActivity.kt`)**
-   - **Root Cause**:
-     - `BiometricAttemptGate` did not clear `token.packageName` when authentication succeeded (`accepted == true`) or when switching apps/going Home while the previous window was still animating out, and consumed the single attempt *before* `BiometricActivity` committed.
-     - If a startup window event or transient focus change caused `biometricHostStarted` / `biometricHostCommitted` to return `false` or triggered system `BiometricPrompt.ERROR_CANCELED (5)` before the user ever interacted with the prompt, `LockerService` dropped the user onto the intermediate `"App is locked"` / `"Use fingerprint"` screen instead of retrying fingerprint.
-   - **Fix**:
-     - Distinguished explicit user cancellation (`ERROR_USER_CANCELED`, `ERROR_NEGATIVE_BUTTON`, lockout) from system/transition aborts (`userCanceled = false`).
-     - Added [`BiometricAttemptGate.releaseForSystemRetry`](file:///C:/Users/Administrator/Documents/Codex/2026-10-16/https-github-com-aload0-applock-https/work/AppLock-master/plus/app/src/main/java/app/locker/plus/BiometricAttemptGate.kt#L9-L15) and `clear()`, clearing the gate on every successful authentication, target switch, or Home exit, and automatically re-launching `BiometricActivity` (while keeping `BiometricBackdrop` visible) whenever a startup transition interrupts the prompt before user interaction.
-     - Added automatic retry on transient system `ERROR_CANCELED` in `MainActivity` as well.
+     - Extended `goingHomeUntil` to `1_500ms` and `lastUnlockedExitUntil` to `2_000ms` in [`LockerService.kt`](app/src/main/java/app/locker/plus/LockerService.kt), covering the entire two-stage One UI 9 Home transition.
+     - Ignored `GoogleDiscoverWindow` (`com.google.android.googlequicksearchbox`) as an `exit_hint_received` trigger and skipped redundant `TYPE_WINDOWS_CHANGED` scans while `homeTransitionActive` is true.
+     - Added `launcherRevealedOnExit` detection in `scan()` when a launcher window is already visible on screen and no protected window is active/focused, and prevented `appWindowCount == 0` during an active `pendingForeground` exit transition from setting `incomplete = true`.
+     - In [`BiometricActivity.kt`](app/src/main/java/app/locker/plus/BiometricActivity.kt), immediately set `window.decorView.alpha = 0f` and `View.INVISIBLE` before calling `finish()` (and restored `alpha = 1f` / `View.VISIBLE` in `bindChallengeIntent`) so One UI 9's closing Shell transition is 100% transparent.
 
 ---
 
-## Summary of 1.5.0 Features (Retained & Enhanced in 1.5.1)
+## Summary of 1.5.0 & 1.5.1 Features (Retained in 1.5.2)
 
-- **Hide Notifications for Locked Apps (`LockerNotificationService.kt`)**: Suppresses active and incoming status-bar notifications from locked apps when not unlocked in the foreground while preserving incoming call and alarm alerts.
-- **Device Admin & Uninstall Guard (`LockerDeviceAdminReceiver.kt`, `device_admin.xml`)**: Blocks unauthorized uninstallation of Sam App Locker and locked apps.
-- **Stealth Pattern Trail & Scrambled PIN Keypad (`CredentialInput.kt`)**: Optional `"Hide pattern trail"` and `"Scramble PIN keypad"` modes.
-- **Zenzy VIP Layout & Customizations (`Appearance.kt`, `AuthPresentation.kt`)**: `Zenzy VIP` and `Pure AMOLED` visual styles, `Midnight` backdrop gradient, quick-action security tiles, and category badges.
+- **Uninstall Guard Scoped Strictly to Locked Apps & Sam App Locker (`LockerService.kt`, `MainActivity.kt`)**: Inspects `packageInstallers` dialog nodes against `protectedUninstallTargets` so unlocked apps uninstall freely while locked apps and Sam App Locker require authentication.
+- **Aligned Locked App Switches & Checkmark Ticks (`MainActivity.kt`, `LockerUi.kt`)**: Consistent `44.dp` trailing `⋮` menu across both system and user apps in the **Locked** tab, plus centered `SwitchTick` checkmarks.
+- **Enforced Fingerprint Priority (`BiometricAttemptGate.kt`, `BiometricActivity.kt`, `LockerService.kt`)**: Distinguishes explicit user cancellation from system/transition aborts (`releaseForSystemRetry`) and automatically retries fingerprint.
+- **Hide Notifications for Locked Apps (`LockerNotificationService.kt`)**, **Stealth Pattern Trail & Scrambled PIN Keypad (`CredentialInput.kt`)**, and **Zenzy VIP / Pure AMOLED / Midnight Styles (`Appearance.kt`, `AuthPresentation.kt`)**.
