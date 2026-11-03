@@ -105,10 +105,13 @@ class PrivacyShield(private val service: LockerService) : LifecycleOwner, ViewMo
             }
         } else if (unknown) {
             biometricActive.value = false
+        } else if (!pinFallback.value && service.shouldStartInBiometricMode(challenge)) {
+            biometricActive.value = true
         }
+        val becameCertain = uncertain.value && !unknown
         token.value = challenge; uncertain.value = unknown
         if (attached) {
-            if (changed && challenge != null && !unknown) afterOpaqueFrame { service.shieldReady(challenge) }
+            if ((changed || becameCertain) && challenge != null && !unknown) afterOpaqueFrame { service.shieldReady(challenge) }
             return
         }
         refreshAppearance()

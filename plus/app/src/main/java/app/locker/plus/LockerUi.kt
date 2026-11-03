@@ -13,6 +13,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.font.FontWeight
@@ -42,10 +43,25 @@ import androidx.compose.ui.unit.dp
     }
 }
 
+@Composable fun SwitchTick() {
+    val color = MaterialTheme.colorScheme.onPrimaryContainer
+    Canvas(Modifier.size(SwitchDefaults.IconSize)) {
+        val w = size.width
+        val h = size.height
+        val stroke = Stroke(width = w * 0.14f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+        drawPath(Path().apply {
+            moveTo(w * 0.22f, h * 0.52f)
+            lineTo(w * 0.43f, h * 0.72f)
+            lineTo(w * 0.78f, h * 0.30f)
+        }, color = color, style = stroke)
+    }
+}
+
 @Composable fun PrivacyMark(modifier: Modifier = Modifier, fingerprint: Boolean = false) {
     val color = MaterialTheme.colorScheme.primary
     Canvas(modifier.size(64.dp)) {
-        val w = size.width; val h = size.height; val stroke = Stroke(w * .045f, cap = StrokeCap.Round)
+        val w = size.width; val h = size.height
+        val stroke = Stroke(w * .065f, cap = StrokeCap.Round, join = StrokeJoin.Round)
         if (fingerprint) {
             for (i in 0..3) {
                 val inset = w * (.12f + i * .095f)
@@ -61,12 +77,19 @@ import androidx.compose.ui.unit.dp
             }, color, style = stroke)
         } else {
             drawPath(Path().apply {
-                moveTo(w * .5f, h * .1f); lineTo(w * .84f, h * .23f); lineTo(w * .81f, h * .55f)
-                quadraticTo(w * .76f, h * .79f, w * .5f, h * .92f)
-                quadraticTo(w * .24f, h * .79f, w * .19f, h * .55f)
-                lineTo(w * .16f, h * .23f); close()
+                moveTo(w * .5f, h * .10f)
+                lineTo(w * .84f, h * .23f)
+                lineTo(w * .81f, h * .54f)
+                quadraticTo(w * .76f, h * .78f, w * .5f, h * .90f)
+                quadraticTo(w * .24f, h * .78f, w * .19f, h * .54f)
+                lineTo(w * .16f, h * .23f)
+                close()
             }, color, style = stroke)
-            drawPath(Path().apply { moveTo(w * .34f, h * .5f); lineTo(w * .46f, h * .62f); lineTo(w * .68f, h * .38f) }, color, style = stroke)
+            drawPath(Path().apply {
+                moveTo(w * .34f, h * .50f)
+                lineTo(w * .45f, h * .61f)
+                lineTo(w * .67f, h * .38f)
+            }, color, style = stroke)
         }
     }
 }

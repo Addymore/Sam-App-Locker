@@ -42,5 +42,14 @@ class AuthPresentationTest {
         assertFalse(gate.take(c1))
         gate.retainVisible(emptySet())
         assertTrue(gate.canTake(c1))
+        assertTrue(gate.take(c1))
+        assertTrue(gate.releaseForSystemRetry(c1, maxRetries = 2))
+        assertTrue(gate.canTake(c1))
+        assertTrue(gate.take(c1))
+        assertTrue(gate.releaseForSystemRetry(c1, maxRetries = 2))
+        assertTrue(gate.take(c1))
+        assertFalse(gate.releaseForSystemRetry(c1, maxRetries = 2))
+        gate.clear("app.one")
+        assertTrue(gate.canTake(c1))
     }
 }
